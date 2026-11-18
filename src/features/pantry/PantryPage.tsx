@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ImagePlus, Package, Pencil, Plus, ScanLine, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { Camera, Package, Pencil, Plus, ScanLine, Trash2, Upload, X } from "lucide-react";
 import { formatQuantity } from "../../lib/format";
 import { commonIngredientUnits, ingredientUnitGroups } from "../../lib/ingredient-units";
 import { pantryErrorMessage } from "../../lib/pantry-errors";
@@ -57,7 +57,8 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
   const [formError, setFormError] = useState("");
   const [pageError, setPageError] = useState("");
   const [search, setSearch] = useState("");
-  const photoInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!imageFile) {
@@ -95,7 +96,8 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
     setRemoveImage(false);
     setFormError("");
     setPageError("");
-    if (photoInputRef.current) photoInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
+    if (uploadInputRef.current) uploadInputRef.current.value = "";
     setFormOpen(true);
   }
 
@@ -153,7 +155,8 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
       });
       setFormOpen(false);
       setPageError("");
-      if (photoInputRef.current) photoInputRef.current.value = "";
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
     } catch (reason) {
       setFormError(pantryErrorMessage(reason));
     }
@@ -168,6 +171,16 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
     } catch (reason) {
       setPageError(pantryErrorMessage(reason));
     }
+  }
+
+  function selectImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) {
+      setImageFile(file);
+      setRemoveImage(false);
+      setFormError("");
+    }
+    event.target.value = "";
   }
 
   return (
@@ -294,27 +307,36 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
                   <img className="pantry-photo-preview" src={previewUrl || editingItem?.image_url || ""} alt="Vorschau des Produktbilds" />
                 )}
                 <div className="pantry-photo-controls">
-                  <label className="button button-outline pantry-photo-button">
-                    <ImagePlus size={17} /> {hasPreviewImage ? "Bild ändern" : "Bild hinzufügen"}
-                    <input
-                      ref={photoInputRef}
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif"
-                      capture="environment"
-                      onChange={(event) => {
-                        setImageFile(event.target.files?.[0] ?? null);
-                        setRemoveImage(false);
-                      }}
-                    />
-                  </label>
+                  <div className="pantry-photo-actions">
+                    <label className="button button-outline pantry-photo-button">
+                      <Camera size={17} /> Mit Kamera aufnehmen
+                      <input
+                        ref={cameraInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={selectImage}
+                      />
+                    </label>
+                    <label className="button button-outline pantry-photo-button">
+                      <Upload size={17} /> Bild hochladen
+                      <input
+                        ref={uploadInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif"
+                        onChange={selectImage}
+                      />
+                    </label>
+                  </div>
                   {hasPreviewImage && (
                     <button type="button" className="text-button pantry-remove-photo" onClick={() => {
                       setImageFile(null);
                       setRemoveImage(true);
-                      if (photoInputRef.current) photoInputRef.current.value = "";
+                      if (cameraInputRef.current) cameraInputRef.current.value = "";
+                      if (uploadInputRef.current) uploadInputRef.current.value = "";
                     }}>Bild entfernen</button>
                   )}
-                  <small>Foto aufnehmen oder auswählen · große Fotos werden verkleinert, HEIC wird umgewandelt</small>
+                  <small>Foto aufnehmen oder Datei aus Galerie/Ordner wählen · große Fotos werden verkleinert</small>
                 </div>
               </div>
               {formError && <p className="form-error" role="alert">{formError}</p>}
