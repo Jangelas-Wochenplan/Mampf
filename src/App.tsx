@@ -954,23 +954,30 @@ export default function App() {
         }
       }
 
+      const isAutomaticImage = !payload.image_file && Boolean(imageFile);
       if (imageFile) {
-        const preparedImage = await preparePantryImage(imageFile);
-        uploadedImagePath = `${household.id}/${crypto.randomUUID()}.${preparedImage.format.extension}`;
-        const { error: uploadError } = await client.storage
-          .from(RECIPE_IMAGE_BUCKET)
-          .upload(uploadedImagePath, preparedImage.file, {
-            cacheControl: "3600",
-            contentType: preparedImage.format.contentType,
-            upsert: false,
-          });
-        if (uploadError) {
-          const code = "code" in uploadError && typeof uploadError.code === "string" ? uploadError.code : "";
-          const detail = [uploadError.message, code && `(${code})`].filter(Boolean).join(" ");
-          if (code === "42501" || /row-level security|permission denied/i.test(uploadError.message)) {
-            throw new Error(`Supabase blockiert den Rezeptbild-Upload. Prüfe, ob der private Bucket „recipe-images“ und die Policy „recipe_images_member_access“ vorhanden sind. ${detail}`);
+        try {
+          const preparedImage = await preparePantryImage(imageFile);
+          const imagePath = `${household.id}/${crypto.randomUUID()}.${preparedImage.format.extension}`;
+          const { error: uploadError } = await client.storage
+            .from(RECIPE_IMAGE_BUCKET)
+            .upload(imagePath, preparedImage.file, {
+              cacheControl: "3600",
+              contentType: preparedImage.format.contentType,
+              upsert: false,
+            });
+          if (uploadError) {
+            const code = "code" in uploadError && typeof uploadError.code === "string" ? uploadError.code : "";
+            const detail = [uploadError.message, code && `(${code})`].filter(Boolean).join(" ");
+            if (code === "42501" || /row-level security|permission denied/i.test(uploadError.message)) {
+              throw new Error(`Supabase blockiert den Rezeptbild-Upload. Prüfe, ob der private Bucket „recipe-images“ und die Policy „recipe_images_member_access“ vorhanden sind. ${detail}`);
+            }
+            throw new Error(`Rezeptbild-Upload fehlgeschlagen: ${detail}`);
           }
-          throw new Error(`Rezeptbild-Upload fehlgeschlagen: ${detail}`);
+          uploadedImagePath = imagePath;
+        } catch (reason) {
+          if (!isAutomaticImage) throw reason;
+          imageWarning = `${imageWarning ? `${imageWarning} ` : ""}Das automatische Vorschaubild konnte nicht im privaten Rezeptbild-Speicher abgelegt werden: ${errorText(reason)}`;
         }
       }
 
