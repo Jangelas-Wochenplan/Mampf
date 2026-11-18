@@ -17,6 +17,7 @@ import {
   Package,
   Palette,
   Plus,
+  RotateCcw,
   Search,
   Settings2,
   ShoppingBasket,
@@ -36,7 +37,7 @@ import { serializeMealPlan } from "./lib/meal-plan-payload";
 import { averageRating } from "./lib/ratings";
 import { comparePantryAvailability } from "./lib/pantry-matching";
 import { pantryErrorMessage } from "./lib/pantry-errors";
-import { pantryImageFormat } from "./lib/pantry-images";
+import { preparePantryImage } from "./lib/pantry-images";
 import { isShoppingListComplete } from "./lib/shopping-archive";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { readSavedDarkMode, saveDarkMode, UI_THEME } from "./lib/ui-themes";
@@ -1004,19 +1005,23 @@ export default function App() {
     let uploadedPath: string | null = null;
     try {
       if (input.imageFile) {
-        const format = pantryImageFormat(input.imageFile);
-        if (!format || input.imageFile.size > 8 * 1024 * 1024) {
-          throw new Error("Bitte wähle ein JPEG-, PNG-, WebP- oder GIF-Bild mit höchstens 8 MB aus.");
-        }
-        uploadedPath = `${household.id}/${crypto.randomUUID()}.${format.extension}`;
+        const preparedImage = await preparePantryImage(input.imageFile);
+        uploadedPath = `${household.id}/${crypto.randomUUID()}.${preparedImage.format.extension}`;
         const { error: uploadError } = await client.storage
           .from(PANTRY_IMAGE_BUCKET)
-          .upload(uploadedPath, input.imageFile, {
+          .upload(uploadedPath, preparedImage.file, {
             cacheControl: "3600",
-            contentType: format.contentType,
+            contentType: preparedImage.format.contentType,
             upsert: false,
           });
-        if (uploadError) throw uploadError;
+        if (uploadError) {
+          const code = "code" in uploadError && typeof uploadError.code === "string" ? uploadError.code : "";
+          const detail = [uploadError.message, code && `(${code})`].filter(Boolean).join(" ");
+          if (code === "42501" || /row-level security|permission denied/i.test(uploadError.message)) {
+            throw new Error(`Supabase blockiert den Bild-Upload. Prüfe, ob der private Bucket „pantry-images“ und die Policy „pantry_images_member_access“ vorhanden sind. ${detail}`);
+          }
+          throw new Error(`Bild-Upload fehlgeschlagen: ${detail}`);
+        }
         imagePath = uploadedPath;
       }
 
@@ -1325,6 +1330,23 @@ export default function App() {
       setNewShoppingItem("");
       setWorkspaceRevision((revision) => revision + 1);
       setNotice("Der eigene Eintrag wurde zur Einkaufsliste hinzugefügt.");
+    });
+  }
+
+  async function restoreShoppingList(archived: ArchivedShoppingList) {
+    await runAction(async () => {
+      if (!client || !household) throw new Error("Haushalt nicht verfügbar.");
+      const { error: restoreError } = await client
+        .from("meal_plans")
+        .update({ shopping_archived_at: null })
+        .eq("id", archived.id)
+        .eq("household_id", household.id)
+        .select("id")
+        .single();
+      if (restoreError) throw restoreError;
+      setWeekStart(archived.start_date);
+      setWorkspaceRevision((revision) => revision + 1);
+      setNotice("Die Einkaufsliste wurde wiederhergestellt. Der Abhakstatus bleibt erhalten.");
     });
   }
 
@@ -1865,6 +1887,12 @@ export default function App() {
                         <li key={item.id}><Check size={14} /><span>{item.name}{item.is_custom && <small>Eigener Eintrag</small>}</span><small>{formatQuantity(item.quantity, item.unit)}</small></li>
                       ))}
                     </ul>
+                    <div className="shopping-archive-actions">
+                      <button className="button button-outline" type="button" disabled={busy} onClick={() => void restoreShoppingList(archived)}>
+                        <RotateCcw size={15} /> Wiederherstellen
+                      </button>
+                      <small>Die Liste wird in ihrer ursprünglichen Woche geöffnet; der Abhakstatus bleibt erhalten.</small>
+                    </div>
                   </details>
                 ))}
               </section>

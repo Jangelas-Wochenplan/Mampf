@@ -365,6 +365,8 @@ p { color: var(--muted); line-height: 1.6; }
 .shopping-archive-items li > span { display: grid; flex: 1; }
 .shopping-archive-items li > span small { font-size: 0.64rem; }
 .shopping-archive-items li > small { color: var(--muted); }
+.shopping-archive-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--line); padding: 12px 15px; }
+.shopping-archive-actions small { color: var(--muted); font-size: 0.7rem; }
 .shopping-side { display: grid; gap: 14px; }
 .shopping-illustration-card { position: relative; display: grid; min-height: 230px; place-items: center; overflow: hidden; border-radius: 18px; background: #e9eee4; }
 .shopping-illustration-card::before { position: absolute; width: 160px; height: 160px; border-radius: 50%; background: #d4dfca; content: ""; }
@@ -425,6 +427,7 @@ p { color: var(--muted); line-height: 1.6; }
 .barcode-camera-idle video { opacity: 0; }
 .barcode-camera > div { position: absolute; display: grid; justify-items: center; gap: 8px; color: #e8eee5; font-size: 0.78rem; }
 .barcode-scan-guide { position: absolute; top: 40%; right: 12%; left: 12%; height: 20%; border: 2px solid rgba(255,255,255,.82); border-radius: 9px; box-shadow: 0 0 0 999px rgba(0,0,0,.1); pointer-events: none; }
+.barcode-scan-guide-detected { border-color: #9de0a5; box-shadow: 0 0 0 999px rgba(0,0,0,.18), 0 0 18px rgba(157,224,165,.65); }
 .pantry-scan-message { margin: 12px 0 0; color: #7e8678; font-size: 0.75rem; }
 .pantry-barcode-form { display: grid; gap: 13px; margin-top: 15px; }
 .pantry-barcode-form .button { justify-content: center; }

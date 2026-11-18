@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pantryImageFormat } from "./pantry-images";
+import { isPantryImageCandidate, pantryImageFormat } from "./pantry-images";
 
 describe("pantryImageFormat", () => {
   it("uses supported image MIME types", () => {
@@ -18,5 +18,7 @@ describe("pantryImageFormat", () => {
 
   it("rejects unsupported image formats", () => {
     expect(pantryImageFormat({ type: "image/heic", name: "photo.heic" })).toBeNull();
+    expect(isPantryImageCandidate({ type: "image/heic", name: "photo.heic" })).toBe(true);
+    expect(isPantryImageCandidate({ type: "image/svg+xml", name: "photo.svg" })).toBe(false);
   });
 });
