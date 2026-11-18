@@ -1,0 +1,4 @@
+project_id = "mampf"
+
+[functions.invite-household-member]
+verify_jwt = false
