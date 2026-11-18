@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { commonIngredientUnits, ingredientUnitGroups } from "../../lib/ingredient-units";
+import { recipePreparationText } from "../../lib/recipe-preparation";
 import type { Recipe } from "../../types";
 
 interface IngredientDraft {
@@ -9,12 +10,23 @@ interface IngredientDraft {
   unit: string;
 }
 
+const emptyIngredient = (): IngredientDraft => ({ name: "", quantity: "", unit: "" });
+
+function isEmptyIngredient(ingredient: IngredientDraft) {
+  return !ingredient.name.trim() && !ingredient.quantity.trim() && !ingredient.unit.trim();
+}
+
+function withEmptyIngredientPlaceholder(ingredients: IngredientDraft[]) {
+  return [...ingredients.filter((ingredient) => !isEmptyIngredient(ingredient)), emptyIngredient()];
+}
+
 export interface RecipePayload {
   title: string;
   description: string;
   category: string;
   source_url: string;
   prep_minutes: string;
+  preparation: string;
   servings: number;
   emoji: string;
   ingredients: Array<{ name: string; quantity: string | null; unit: string }>;
@@ -60,14 +72,15 @@ function UnitSelect({
 }
 
 function initialIngredients(recipe?: Recipe): IngredientDraft[] {
-  return recipe?.recipe_ingredients
+  const savedIngredients = recipe?.recipe_ingredients
     .slice()
     .sort((a, b) => a.sort_order - b.sort_order)
     .map((ingredient) => ({
       name: ingredient.name,
       quantity: ingredient.quantity === null ? "" : String(ingredient.quantity),
       unit: ingredient.unit,
-    })) ?? [{ name: "", quantity: "", unit: "" }];
+    })) ?? [];
+  return withEmptyIngredientPlaceholder(savedIngredients);
 }
 
 export default function RecipeEditor({ initial, busy, error, onCancel, onSave, onDelete }: RecipeEditorProps) {
@@ -81,20 +94,24 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
       ? ""
       : String(initial.prep_minutes),
   );
+  const [preparation, setPreparation] = useState(recipePreparationText(initial?.recipe_steps));
   const [emoji, setEmoji] = useState(initial?.emoji ?? "🍲");
   const [draftIngredients, setDraftIngredients] = useState(ingredients);
   const [formError, setFormError] = useState("");
 
   function updateIngredient(index: number, patch: Partial<IngredientDraft>) {
-    setDraftIngredients((current) =>
-      current.map((ingredient, ingredientIndex) =>
+    setDraftIngredients((current) => {
+      const updated = current.map((ingredient, ingredientIndex) =>
         ingredientIndex === index ? { ...ingredient, ...patch } : ingredient,
-      ),
-    );
+      );
+      return withEmptyIngredientPlaceholder(updated);
+    });
   }
 
   function removeIngredient(index: number) {
-    setDraftIngredients((current) => current.filter((_, ingredientIndex) => ingredientIndex !== index));
+    setDraftIngredients((current) =>
+      withEmptyIngredientPlaceholder(current.filter((_, ingredientIndex) => ingredientIndex !== index)),
+    );
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -137,6 +154,7 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
       category: category.trim(),
       source_url: sourceUrl.trim(),
       prep_minutes: prepMinutes.trim(),
+      preparation: preparation.trim(),
       servings: 4,
       emoji,
       ingredients: cleanIngredients.map((ingredient) => ({
@@ -181,6 +199,16 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
         </label>
       </div>
       <label className="field-label">
+        Zubereitung
+        <textarea
+          rows={6}
+          value={preparation}
+          onChange={(event) => setPreparation(event.target.value)}
+          placeholder="Beschreibe die Zubereitung in einem Textfeld."
+          maxLength={12000}
+        />
+      </label>
+      <label className="field-label">
         Kategorie
         <input
           list="recipe-category-suggestions"
@@ -221,22 +249,15 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
         <div className="section-title-row">
           <div>
             <h3>Zutaten</h3>
-            <p>Die Mengen beziehen sich auf vier Portionen.</p>
+            <p>Die Mengen beziehen sich auf vier Portionen. Unten bleibt immer eine leere Zeile für die nächste Zutat.</p>
           </div>
-          <button
-            type="button"
-            className="text-button"
-            onClick={() => setDraftIngredients((current) => [...current, { name: "", quantity: "", unit: "" }])}
-          >
-            <Plus size={16} /> Zutat
-          </button>
         </div>
         {draftIngredients.map((ingredient, index) => (
           <div className="ingredient-edit-row" key={`ingredient-${index}`}>
             <input
               className="ingredient-name"
               aria-label={`Zutat ${index + 1}`}
-              placeholder="Zutat"
+              placeholder={index === draftIngredients.length - 1 ? "Weitere Zutat" : "Zutat"}
               value={ingredient.name}
               onChange={(event) => updateIngredient(index, { name: event.target.value })}
             />
@@ -261,7 +282,7 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
               className="icon-button subtle ingredient-remove"
               aria-label={`Zutat ${index + 1} entfernen`}
               onClick={() => removeIngredient(index)}
-              disabled={draftIngredients.length === 1}
+              disabled={draftIngredients.length === 1 || isEmptyIngredient(ingredient)}
             >
               <Trash2 size={16} />
             </button>

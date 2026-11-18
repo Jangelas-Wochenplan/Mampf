@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, CookingPot, X } from "lucide-react";
 import type { Recipe } from "../../types";
 import { formatQuantity } from "../../lib/format";
+import { recipePreparationText } from "../../lib/recipe-preparation";
 import RecipeArtwork from "./RecipeArtwork";
 
 interface CookingModeProps {
@@ -13,6 +14,7 @@ export default function CookingMode({ recipe, onClose }: CookingModeProps) {
   const [servings, setServings] = useState(4);
   const [checkedIngredients, setCheckedIngredients] = useState<Set<string>>(() => new Set());
   const ingredients = recipe.recipe_ingredients.slice().sort((a, b) => a.sort_order - b.sort_order);
+  const preparation = recipePreparationText(recipe.recipe_steps);
   const allChecked = ingredients.length > 0 && checkedIngredients.size === ingredients.length;
 
   function toggleIngredient(ingredientId: string) {
@@ -67,6 +69,12 @@ export default function CookingMode({ recipe, onClose }: CookingModeProps) {
             ))}
           </ul>
         </section>
+        {preparation && (
+          <section className="cooking-ingredients cooking-preparation" aria-label="Zubereitung">
+            <h2>Zubereitung</h2>
+            <p>{preparation}</p>
+          </section>
+        )}
         <div className="cooking-navigation">
           <button className="button button-primary" onClick={onClose}>
             {allChecked ? "Fertig — Guten Appetit" : "Kochmodus schließen"} <Check size={17} />
