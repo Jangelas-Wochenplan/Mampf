@@ -48,6 +48,7 @@ export interface MealPlan {
   id: string;
   household_id: string;
   start_date: string;
+  shopping_archived_at: string | null;
   plan_days: PlanDay[];
 }
 
@@ -59,6 +60,14 @@ export interface ShoppingItem {
   unit: string;
   checked: boolean;
   sort_order: number;
+  is_custom: boolean;
+}
+
+export interface ArchivedShoppingList {
+  id: string;
+  start_date: string;
+  shopping_archived_at: string;
+  shopping_items: ShoppingItem[];
 }
 
 export interface PantryItem {

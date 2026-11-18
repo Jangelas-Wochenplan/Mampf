@@ -3,6 +3,7 @@ import { ImagePlus, Package, Pencil, Plus, ScanLine, Trash2, X } from "lucide-re
 import { formatQuantity } from "../../lib/format";
 import { commonIngredientUnits, ingredientUnitGroups } from "../../lib/ingredient-units";
 import { pantryErrorMessage } from "../../lib/pantry-errors";
+import { pantryImageFormat } from "../../lib/pantry-images";
 import type { PantryItem } from "../../types";
 import BarcodeScanner from "./BarcodeScanner";
 
@@ -94,6 +95,7 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
     setRemoveImage(false);
     setFormError("");
     setPageError("");
+    if (photoInputRef.current) photoInputRef.current.value = "";
     setFormOpen(true);
   }
 
@@ -129,8 +131,12 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
       setFormError("Bitte gib eine zugekaufte Menge größer als 0 ein.");
       return;
     }
-    if (imageFile && (!imageFile.type.startsWith("image/") || imageFile.size > 8 * 1024 * 1024)) {
-      setFormError("Bitte wähle ein Bild mit höchstens 8 MB aus.");
+    if (imageFile && imageFile.size > 8 * 1024 * 1024) {
+      setFormError("Das Bild darf höchstens 8 MB groß sein.");
+      return;
+    }
+    if (imageFile && !pantryImageFormat(imageFile)) {
+      setFormError("Bitte wähle ein JPEG-, PNG-, WebP- oder GIF-Bild aus.");
       return;
     }
     try {
@@ -147,6 +153,7 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
       });
       setFormOpen(false);
       setPageError("");
+      if (photoInputRef.current) photoInputRef.current.value = "";
     } catch (reason) {
       setFormError(pantryErrorMessage(reason));
     }
@@ -157,6 +164,7 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
     setPageError("");
     try {
       await onDelete(item);
+      if (editingItem?.id === item.id) setFormOpen(false);
     } catch (reason) {
       setPageError(pantryErrorMessage(reason));
     }
@@ -254,9 +262,10 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
               </label>
               <label className="field-label">
                 Barcode
-                <span className="pantry-barcode-input">
+                <span className={`pantry-barcode-input${barcode ? " has-clear" : ""}`}>
                   <input value={barcode} onChange={(event) => setBarcode(event.target.value)} maxLength={64} placeholder="Optional" />
                   <button type="button" className="button button-outline" onClick={() => setScannerOpen(true)} aria-label="Barcode scannen"><ScanLine size={17} /></button>
+                  {barcode && <button type="button" className="icon-button pantry-barcode-clear" onClick={() => setBarcode("")} aria-label="Barcode entfernen"><X size={17} /></button>}
                 </span>
               </label>
               <div className="pantry-quantity-row">
@@ -310,6 +319,7 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
               </div>
               {formError && <p className="form-error" role="alert">{formError}</p>}
               <div className="form-actions">
+                {editingItem && <button type="button" className="button button-outline pantry-delete-button" onClick={() => void deleteItem(editingItem)} disabled={busy}><Trash2 size={16} /> Vorrat löschen</button>}
                 <button type="button" className="button button-quiet" onClick={() => setFormOpen(false)}>Abbrechen</button>
                 <button type="submit" className="button button-primary" disabled={busy}>{busy ? "Wird gespeichert …" : "Vorrat speichern"}</button>
               </div>
