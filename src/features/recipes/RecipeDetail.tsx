@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Clock3, CookingPot, ExternalLink, Pencil, Star, X } from "lucide-react";
+import { Clock3, CookingPot, ExternalLink, Pencil, Star, Trash2, X } from "lucide-react";
 import RecipeArtwork from "./RecipeArtwork";
 import { averageRating, ratingByUser } from "../../lib/ratings";
 import type { Recipe } from "../../types";
@@ -10,8 +10,10 @@ interface RecipeDetailProps {
   onClose: () => void;
   onEdit: () => void;
   onCook: () => void;
+  onDelete: () => void;
   currentUserId: string;
   busy: boolean;
+  error?: string;
   onRate: (rating: number) => void;
 }
 
@@ -20,13 +22,14 @@ export default function RecipeDetail({
   onClose,
   onEdit,
   onCook,
+  onDelete,
   currentUserId,
   busy,
+  error,
   onRate,
 }: RecipeDetailProps) {
   const [servings, setServings] = useState(4);
   const ingredients = recipe.recipe_ingredients.slice().sort((a, b) => a.sort_order - b.sort_order);
-  const steps = recipe.recipe_steps.slice().sort((a, b) => a.position - b.position);
   const ratings = recipe.recipe_ratings ?? [];
   const average = averageRating(ratings);
   const ownRating = ratingByUser(ratings, currentUserId);
@@ -81,7 +84,7 @@ export default function RecipeDetail({
               : `Durchschnitt ${average.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} von 5 · ${ratings.length} ${ratings.length === 1 ? "Bewertung" : "Bewertungen"}`}
           </p>
         </div>
-        <div className="detail-columns">
+        <div className="detail-columns detail-columns-single">
           <section>
             <div className="section-title-row">
               <div><h3>Zutaten</h3><p>Auf eure Portionen angepasst</p></div>
@@ -101,32 +104,14 @@ export default function RecipeDetail({
               ))}
             </ul>
           </section>
-          <section>
-            <div className="section-title-row">
-              <div><h3>So geht’s</h3><p>{steps.length} einfache Schritte</p></div>
-            </div>
-            <ol className="detail-step-list">
-              {steps.map((step, index) => (
-                <li key={step.id}>
-                  <span className="step-count">{index + 1}</span>
-                  <div>
-                    <p>{step.instruction}</p>
-                    {step.step_ingredients.length > 0 && (
-                      <small>
-                        {step.step_ingredients.map((item) =>
-                          `${formatQuantity(item.quantity, item.unit, servings)} ${item.recipe_ingredient?.name ?? ""}`.trim(),
-                        ).join(" · ")}
-                      </small>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </section>
         </div>
+        {error && <p className="form-error" role="alert">{error}</p>}
         <div className="detail-actions">
+          <button className="button button-quiet danger-text recipe-delete-button" onClick={onDelete} disabled={busy}>
+            <Trash2 size={16} /> Gericht löschen
+          </button>
           <button className="button button-quiet" onClick={onEdit}><Pencil size={16} /> Rezept bearbeiten</button>
-          <button className="button button-primary" onClick={onCook}><CookingPot size={17} /> Kochmodus starten</button>
+          <button className="button button-primary" onClick={onCook} disabled={busy}><CookingPot size={17} /> Kochmodus starten</button>
         </div>
       </article>
     </div>

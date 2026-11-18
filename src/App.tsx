@@ -12,6 +12,8 @@ import {
   Clock3,
   Home,
   LogOut,
+  Package,
+  Palette,
   Plus,
   Search,
   Settings2,
@@ -21,6 +23,7 @@ import {
   Utensils,
 } from "lucide-react";
 import CookingMode from "./features/recipes/CookingMode";
+import PantryPage, { type PantryItemSaveInput } from "./features/pantry/PantryPage";
 import RecipeDetail from "./features/recipes/RecipeDetail";
 import RecipeArtwork from "./features/recipes/RecipeArtwork";
 import RecipeEditor, { type RecipePayload } from "./features/recipes/RecipeEditor";
@@ -28,14 +31,19 @@ import { addDays, formatDateKey, formatQuantity, localDateKey, mondayOf } from "
 import { chooseRecipesForWeek, type PlannedDay, type RecipeUsage } from "./lib/meal-planning";
 import { serializeMealPlan } from "./lib/meal-plan-payload";
 import { averageRating } from "./lib/ratings";
+import { comparePantryAvailability } from "./lib/pantry-matching";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import type { AppView, Household, HouseholdRole, MealPlan, Recipe, ShoppingItem } from "./types";
+import { readSavedUITheme, saveUITheme, UI_THEMES, type UIThemeId } from "./lib/ui-themes";
+import type { AppView, Household, HouseholdRole, MealPlan, PantryItem, Recipe, ShoppingItem } from "./types";
+
+const PANTRY_IMAGE_BUCKET = "pantry-images";
 
 const viewLabels: Record<AppView, string> = {
   home: "Heute",
   plan: "Wochenplan",
   recipes: "Rezepte",
   shopping: "Einkaufsliste",
+  pantry: "Vorräte",
 };
 
 function errorText(error: unknown): string {
@@ -62,6 +70,20 @@ function weekDates(weekStart: string): PlannedDay[] {
     date: addDays(weekStart, index),
     excluded: false,
   }));
+}
+
+function pantrySummary(item: ShoppingItem, pantryItems: PantryItem[]): string | null {
+  const availability = comparePantryAvailability(item, pantryItems);
+  if (!availability.hasNameMatch) return null;
+  if (!availability.hasCompatibleUnit) return "Vorrat vorhanden · Einheit prüfen";
+  if (!availability.availableQuantity) return null;
+  const inStock = formatQuantity(availability.availableQuantity, item.unit);
+  if (availability.amountToBuy === null) return `Im Vorrat: ${inStock}`;
+  if (availability.fullyAvailable) return `Vorrat reicht · ${inStock} vorhanden`;
+  if (availability.availableQuantity > 0) {
+    return `Vorrat: ${inStock} · noch ${formatQuantity(availability.amountToBuy, item.unit)} kaufen`;
+  }
+  return null;
 }
 
 function localName(email: string | undefined, username?: unknown): string {
@@ -522,18 +544,41 @@ export default function App() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [plan, setPlan] = useState<MealPlan | null>(null);
   const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
+  const [pantryItems, setPantryItems] = useState<PantryItem[]>([]);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
   const [view, setView] = useState<AppView>("home");
   const [busy, setBusy] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [uiTheme, setUITheme] = useState<UIThemeId>(readSavedUITheme);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const profileTriggerRef = useRef<HTMLButtonElement>(null);
+  const suppressProfileFocusOpen = useRef(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [editorRecipe, setEditorRecipe] = useState<Recipe | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [cookingRecipe, setCookingRecipe] = useState<Recipe | null>(null);
   const [recipeSearch, setRecipeSearch] = useState("");
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = uiTheme;
+    document.documentElement.dataset.colorMode = UI_THEMES.find((theme) => theme.id === uiTheme)?.mode ?? "light";
+    if (!saveUITheme(uiTheme)) {
+      setNotice("Die Designauswahl gilt nur für diese Sitzung und konnte nicht gespeichert werden.");
+    }
+  }, [uiTheme]);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    function closeProfileMenu(event: PointerEvent) {
+      if (!(event.target instanceof Node) || !profileMenuRef.current?.contains(event.target)) setProfileMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", closeProfileMenu);
+    return () => document.removeEventListener("pointerdown", closeProfileMenu);
+  }, [profileMenuOpen]);
 
   useEffect(() => {
     if (!client) return;
@@ -561,6 +606,7 @@ export default function App() {
   useEffect(() => {
     if (!client || !session) {
       setHousehold(null);
+      setPantryItems([]);
       setWorkspaceReady(Boolean(session === null && authReady));
       setPendingInviteToken(null);
       setInviteRequiresPassword(false);
@@ -593,6 +639,7 @@ export default function App() {
       if (membershipError) throw membershipError;
       if (!data) {
         setHousehold(null);
+        setPantryItems([]);
         setWorkspaceReady(true);
         return;
       }
@@ -619,7 +666,7 @@ export default function App() {
     async function loadRecipes() {
       const { data, error: recipesError } = await client!
         .from("recipes")
-        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_steps(id, instruction, position, step_ingredients:recipe_step_ingredients(id, recipe_ingredient_id, quantity, unit, recipe_ingredient:recipe_ingredients(name))), recipe_ratings(user_id, rating)")
+        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_ratings(user_id, rating)")
         .eq("household_id", household!.id)
         .order("title");
       if (recipesError) throw recipesError;
@@ -636,7 +683,6 @@ export default function App() {
         emoji: string;
         created_at: string;
         recipe_ingredients: Recipe["recipe_ingredients"];
-        recipe_steps: Recipe["recipe_steps"];
         recipe_ratings: Recipe["recipe_ratings"];
       }>;
       const cleanRecipes = recipeRows.map((value) => {
@@ -645,9 +691,6 @@ export default function App() {
           recipe_ingredients: value.recipe_ingredients.slice().sort(
             (a, b) => a.sort_order - b.sort_order,
           ),
-          recipe_steps: value.recipe_steps
-            .map((step) => ({ ...step, position: Number(step.position) }))
-            .sort((a, b) => Number(a.position) - Number(b.position)),
         };
       });
       if (active) setRecipes(cleanRecipes);
@@ -660,7 +703,24 @@ export default function App() {
       if (membersError) throw membersError;
       if (active) setMemberCount(data?.length ?? 0);
     }
-    Promise.all([loadRecipes(), loadMembers()])
+    async function loadPantry() {
+      const { data, error: pantryError } = await client!
+        .from("pantry_items")
+        .select("id, household_id, name, barcode, quantity, unit, image_path, created_at, updated_at")
+        .eq("household_id", household!.id)
+        .order("name");
+      if (pantryError) throw pantryError;
+      const rows = (data ?? []) as unknown as Array<Omit<PantryItem, "image_url">>;
+      const items = await Promise.all(rows.map(async (item): Promise<PantryItem> => {
+        if (!item.image_path) return { ...item, image_url: null };
+        const { data: signedImage, error: imageError } = await client!
+          .storage.from(PANTRY_IMAGE_BUCKET).createSignedUrl(item.image_path, 60 * 60);
+        if (imageError) throw imageError;
+        return { ...item, image_url: signedImage.signedUrl };
+      }));
+      if (active) setPantryItems(items);
+    }
+    Promise.all([loadRecipes(), loadMembers(), loadPantry()])
       .catch((reason: unknown) => { if (active) setError(errorText(reason)); })
       .finally(() => { if (active) setLoadingData(false); });
     return () => { active = false; };
@@ -826,7 +886,7 @@ export default function App() {
       if (!client) throw new Error("Supabase ist nicht verbunden.");
       const sourceUrl = payload.source_url.trim();
       const { data: recipeId, error: saveError } = await client.rpc("save_recipe_with_category", {
-        recipe_payload: payload,
+        recipe_payload: { ...payload, steps: [] },
         target_recipe_id: editorRecipe?.id ?? null,
       });
       if (saveError) throw saveError;
@@ -906,6 +966,128 @@ export default function App() {
       setWorkspaceRevision((revision) => revision + 1);
       setNotice("Das Gericht wurde gelöscht. Betroffene Wochenpläne und Einkaufslisten wurden aktualisiert.");
     });
+  }
+
+  async function savePantryItem(input: PantryItemSaveInput) {
+    if (!client || !household) throw new Error("Haushalt nicht verfügbar.");
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const existing = input.id ? pantryItems.find((item) => item.id === input.id) : undefined;
+    let imagePath = input.removeImage ? null : existing?.image_path ?? null;
+    let uploadedPath: string | null = null;
+    try {
+      if (input.imageFile) {
+        const extensionByType: Record<string, string> = {
+          "image/jpeg": "jpg",
+          "image/png": "png",
+          "image/webp": "webp",
+          "image/gif": "gif",
+        };
+        const extension = extensionByType[input.imageFile.type];
+        if (!extension || input.imageFile.size > 8 * 1024 * 1024) {
+          throw new Error("Bitte wähle ein JPEG-, PNG-, WebP- oder GIF-Bild mit höchstens 8 MB aus.");
+        }
+        uploadedPath = `${household.id}/${crypto.randomUUID()}.${extension}`;
+        const { error: uploadError } = await client.storage
+          .from(PANTRY_IMAGE_BUCKET)
+          .upload(uploadedPath, input.imageFile, {
+            cacheControl: "3600",
+            contentType: input.imageFile.type,
+            upsert: false,
+          });
+        if (uploadError) throw uploadError;
+        imagePath = uploadedPath;
+      }
+
+      const record = {
+        household_id: household.id,
+        name: input.name,
+        barcode: input.barcode,
+        quantity: input.quantity,
+        unit: input.unit,
+        image_path: imagePath,
+      };
+      if (input.id) {
+        const { error: updateError } = await client
+          .from("pantry_items")
+          .update({ ...record, updated_at: new Date().toISOString() })
+          .eq("id", input.id)
+          .eq("household_id", household.id)
+          .select("id")
+          .single();
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await client
+          .from("pantry_items")
+          .insert(record)
+          .select("id")
+          .single();
+        if (insertError) throw insertError;
+      }
+    } catch (reason) {
+      if (uploadedPath) {
+        let cleanupError: unknown;
+        try {
+          const result = await client.storage.from(PANTRY_IMAGE_BUCKET).remove([uploadedPath]);
+          cleanupError = result.error;
+        } catch (error) {
+          cleanupError = error;
+        }
+        if (cleanupError) {
+          const combinedError = new Error(`${errorText(reason)} Das nicht gespeicherte Bild konnte zudem nicht entfernt werden: ${errorText(cleanupError)}`);
+          setError(errorText(combinedError));
+          throw combinedError;
+        }
+      }
+      setError(errorText(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+
+    setWorkspaceRevision((revision) => revision + 1);
+    setNotice(input.id ? "Der Vorrat wurde aktualisiert." : "Der Vorrat wurde hinzugefügt.");
+    if (existing?.image_path && existing.image_path !== imagePath) {
+      try {
+        const { error: cleanupError } = await client.storage.from(PANTRY_IMAGE_BUCKET).remove([existing.image_path]);
+        if (cleanupError) throw cleanupError;
+      } catch (reason) {
+        setError(`Der Vorrat wurde gespeichert, aber das alte Produktbild konnte nicht entfernt werden: ${errorText(reason)}`);
+      }
+    }
+  }
+
+  async function deletePantryItem(item: PantryItem) {
+    if (!client || !household) throw new Error("Haushalt nicht verfügbar.");
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: deleteError } = await client
+        .from("pantry_items")
+        .delete()
+        .eq("id", item.id)
+        .eq("household_id", household.id)
+        .select("id")
+        .single();
+      if (deleteError) throw deleteError;
+    } catch (reason) {
+      setError(errorText(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+    setWorkspaceRevision((revision) => revision + 1);
+    setNotice("Der Vorrat wurde entfernt.");
+    if (item.image_path) {
+      try {
+        const { error: cleanupError } = await client.storage.from(PANTRY_IMAGE_BUCKET).remove([item.image_path]);
+        if (cleanupError) throw cleanupError;
+      } catch (reason) {
+        setError(`Der Vorrat wurde entfernt, aber das Produktbild konnte nicht gelöscht werden: ${errorText(reason)}`);
+      }
+    }
   }
 
   async function rateRecipe(recipeId: string, rating: number) {
@@ -1118,6 +1300,7 @@ export default function App() {
     { id: "plan", icon: CalendarDays },
     { id: "recipes", icon: Utensils },
     { id: "shopping", icon: ShoppingBasket },
+    { id: "pantry", icon: Package },
   ];
   const todayLabel = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
   const completedItems = shoppingItems.filter((item) => item.checked).length;
@@ -1143,20 +1326,81 @@ export default function App() {
               <Plus size={16} /> <span>Einladen</span>
             </button>
           )}
-          <div className="profile-menu" title={session.user.email ?? ""}>
-            <span className="avatar">{localName(session.user.email, session.user.user_metadata.username)[0]?.toLocaleUpperCase("de-DE") ?? "M"}</span>
-            <span className="profile-name">{localName(session.user.email, session.user.user_metadata.username)}</span>
+          <div
+            ref={profileMenuRef}
+            className={`profile-menu${profileMenuOpen ? " is-open" : ""}`}
+            onMouseEnter={() => setProfileMenuOpen(true)}
+            onMouseLeave={() => setProfileMenuOpen(false)}
+            onFocus={() => {
+              if (suppressProfileFocusOpen.current) {
+                suppressProfileFocusOpen.current = false;
+                return;
+              }
+              setProfileMenuOpen(true);
+            }}
+            onBlur={(event) => {
+              if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setProfileMenuOpen(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setProfileMenuOpen(false);
+                suppressProfileFocusOpen.current = true;
+                profileTriggerRef.current?.focus();
+              }
+            }}
+          >
             <button
-              className="icon-button logout-button"
-              aria-label="Abmelden"
-              title="Abmelden"
-              onClick={() => void runAction(async () => {
-                const { error: signOutError } = await client.auth.signOut();
-                if (signOutError) throw signOutError;
-              })}
+              ref={profileTriggerRef}
+              type="button"
+              className="profile-menu-trigger"
+              aria-label="Profil und Designvorlagen"
+              aria-expanded={profileMenuOpen}
+              aria-controls="profile-flyout"
+              onClick={() => setProfileMenuOpen(true)}
             >
-              <LogOut size={17} />
+              <span className="avatar">{localName(session.user.email, session.user.user_metadata.username)[0]?.toLocaleUpperCase("de-DE") ?? "M"}</span>
+              <span className="profile-name">{localName(session.user.email, session.user.user_metadata.username)}</span>
+              <ChevronDown className="profile-menu-chevron" size={15} />
             </button>
+            <div className="profile-flyout" id="profile-flyout" aria-label="Design und Konto">
+              <div className="profile-flyout-user">
+                <strong>{localName(session.user.email, session.user.user_metadata.username)}</strong>
+                <small>{session.user.email}</small>
+              </div>
+              <div className="theme-picker-heading">
+                <span><Palette size={16} /> Oberfläche</span>
+                <small>10 Vorlagen</small>
+              </div>
+              <div className="theme-picker" role="group" aria-label="Designvorlage auswählen">
+                {UI_THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    className={`theme-option${uiTheme === theme.id ? " selected" : ""}`}
+                    aria-pressed={uiTheme === theme.id}
+                    onClick={() => setUITheme(theme.id)}
+                  >
+                    <span className={`theme-swatch theme-swatch--${theme.id}`} aria-hidden="true" />
+                    <span className="theme-option-copy">
+                      <strong>{theme.name}</strong>
+                      <small>{theme.style}</small>
+                    </span>
+                    <span className={`theme-mode-badge ${theme.mode}`}>{theme.mode === "dark" ? "Dunkel" : "Hell"}</span>
+                    {uiTheme === theme.id && <Check className="theme-selected-check" size={16} aria-hidden="true" />}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="profile-logout"
+                onClick={() => void runAction(async () => {
+                  const { error: signOutError } = await client.auth.signOut();
+                  if (signOutError) throw signOutError;
+                })}
+              >
+                <LogOut size={17} /> Abmelden
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -1257,15 +1501,21 @@ export default function App() {
                     <div className="shopping-progress"><span style={{ width: `${(completedItems / shoppingItems.length) * 100}%` }} /></div>
                     <div className="shopping-progress-caption"><span>{completedItems} von {shoppingItems.length} erledigt</span><ShoppingBasket size={15} /></div>
                     <ul className="shopping-preview-list">
-                      {shoppingItems.slice(0, 5).map((item) => (
-                        <li key={item.id} className={item.checked ? "checked" : ""}>
-                          <button aria-label={`${item.checked ? "Abhaken rückgängig" : "Abhaken"}: ${item.name}`} onClick={() => void toggleShoppingItem(item)}>
-                            {item.checked && <Check size={12} />}
-                          </button>
-                          <span>{item.name}</span>
-                          <small>{formatQuantity(item.quantity, item.unit)}</small>
-                        </li>
-                      ))}
+                      {shoppingItems.slice(0, 5).map((item) => {
+                        const summary = pantrySummary(item, pantryItems);
+                        return (
+                          <li key={item.id} className={item.checked ? "checked" : ""}>
+                            <button aria-label={`${item.checked ? "Abhaken rückgängig" : "Abhaken"}: ${item.name}`} onClick={() => void toggleShoppingItem(item)}>
+                              {item.checked && <Check size={12} />}
+                            </button>
+                            <span className="shopping-preview-copy">
+                              <span>{item.name}</span>
+                              {summary && <small className="pantry-stock-note">{summary}</small>}
+                            </span>
+                            <small>{formatQuantity(item.quantity, item.unit)}</small>
+                          </li>
+                        );
+                      })}
                     </ul>
                     <button className="text-button shopping-open-link" onClick={() => setView("shopping")}>Liste öffnen <ArrowRight size={15} /></button>
                   </>
@@ -1433,20 +1683,27 @@ export default function App() {
                   <div className="shopping-list-card-head"><div><span className="shopping-bag-icon">🛍️</span><div><h2>Diese Woche</h2><p>{formatDateKey(weekStart, { day: "numeric", month: "long" })} – {formatDateKey(addDays(weekStart, 6), { day: "numeric", month: "long" })}</p></div></div><span className="shopping-counter">{shoppingItems.length - completedItems} offen</span></div>
                   <div className="shopping-big-progress"><span style={{ width: `${(completedItems / shoppingItems.length) * 100}%` }} /></div>
                   <ul className="shopping-full-list">
-                    {shoppingItems.map((item) => (
-                      <li key={item.id} className={item.checked ? "checked" : ""}>
-                        <button className="shopping-checkbox" onClick={() => void toggleShoppingItem(item)} aria-label={`${item.checked ? "Wieder öffnen" : "Als erledigt markieren"}: ${item.name}`}>
-                          {item.checked && <Check size={14} />}
-                        </button>
-                        <span className="shopping-item-name">{item.name}</span>
-                        <span className="shopping-item-amount">{formatQuantity(item.quantity, item.unit)}</span>
-                      </li>
-                    ))}
+                    {shoppingItems.map((item) => {
+                      const summary = pantrySummary(item, pantryItems);
+                      return (
+                        <li key={item.id} className={item.checked ? "checked" : ""}>
+                          <button className="shopping-checkbox" onClick={() => void toggleShoppingItem(item)} aria-label={`${item.checked ? "Wieder öffnen" : "Als erledigt markieren"}: ${item.name}`}>
+                            {item.checked && <Check size={14} />}
+                          </button>
+                          <span className="shopping-item-copy">
+                            <span className="shopping-item-name">{item.name}</span>
+                            {summary && <small className="pantry-stock-note">{summary}</small>}
+                          </span>
+                          <span className="shopping-item-amount">{formatQuantity(item.quantity, item.unit)}</span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
                 <aside className="shopping-side">
                   <div className="shopping-illustration-card"><div className="market-bag">🧺</div><span>frisch geplant</span><i>✳</i></div>
-                  <div className="shopping-hint"><Sparkles size={18} /><p>Doppelte Zutaten sind schon zusammengerechnet. Ein Häkchen genügt, wenn etwas im Korb liegt.</p></div>
+                  <div className="shopping-hint"><Sparkles size={18} /><p>Doppelte Zutaten sind zusammengerechnet. Mampf zeigt Vorrat und Restbedarf; Bestände werden nicht automatisch verändert.</p></div>
+                  <button className="button button-outline full-width" onClick={() => setView("pantry")}><Package size={16} /> Vorräte verwalten</button>
                   <button className="button button-outline full-width" onClick={() => setView("plan")}><CalendarDays size={16} /> Zum Wochenplan</button>
                 </aside>
               </div>
@@ -1458,6 +1715,15 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {view === "pantry" && (
+          <PantryPage
+            items={pantryItems}
+            busy={busy}
+            onSave={savePantryItem}
+            onDelete={deletePantryItem}
+          />
         )}
       </main>
 
@@ -1488,6 +1754,7 @@ export default function App() {
               key={editorRecipe?.id ?? "new"}
               initial={editorRecipe ?? undefined}
               busy={busy}
+              error={error}
               onCancel={() => { setEditorOpen(false); setEditorRecipe(null); }}
               onSave={createRecipe}
               onDelete={editorRecipe ? () => deleteRecipe(editorRecipe) : undefined}
@@ -1500,10 +1767,12 @@ export default function App() {
           recipe={selectedRecipe}
           currentUserId={session.user.id}
           busy={busy}
+          error={error}
           onRate={(rating) => void rateRecipe(selectedRecipe.id, rating)}
           onClose={() => setSelectedRecipe(null)}
           onEdit={() => { setEditorRecipe(selectedRecipe); setEditorOpen(true); setSelectedRecipe(null); }}
           onCook={() => { setCookingRecipe(selectedRecipe); setSelectedRecipe(null); }}
+          onDelete={() => void deleteRecipe(selectedRecipe)}
         />
       )}
       {cookingRecipe && <CookingMode recipe={cookingRecipe} onClose={() => setCookingRecipe(null)} />}

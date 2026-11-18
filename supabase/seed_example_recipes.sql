@@ -41,7 +41,10 @@ begin
       where existing.household_id = target_household_id
         and lower(existing.title) = lower(recipe ->> 'title')
     ) then
-      perform public.save_recipe_with_category(recipe, null);
+      perform public.save_recipe_with_category(
+        recipe || jsonb_build_object('steps', '[]'::jsonb),
+        null
+      );
     end if;
   end loop;
 end

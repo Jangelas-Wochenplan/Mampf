@@ -1,22 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { commonIngredientUnits, ingredientUnitGroups } from "../../lib/ingredient-units";
 import type { Recipe } from "../../types";
 
 interface IngredientDraft {
   name: string;
   quantity: string;
   unit: string;
-}
-
-interface StepIngredientDraft {
-  ingredient_index: number;
-  quantity: string;
-  unit: string;
-}
-
-interface StepDraft {
-  instruction: string;
-  ingredients: StepIngredientDraft[];
 }
 
 export interface RecipePayload {
@@ -28,69 +18,16 @@ export interface RecipePayload {
   servings: number;
   emoji: string;
   ingredients: Array<{ name: string; quantity: string | null; unit: string }>;
-  steps: Array<{
-    instruction: string;
-    ingredients: StepIngredientDraft[];
-  }>;
 }
 
 interface RecipeEditorProps {
   initial?: Recipe;
   busy: boolean;
+  error?: string;
   onCancel: () => void;
   onSave: (payload: RecipePayload) => Promise<void>;
   onDelete?: () => Promise<void>;
 }
-
-const unitGroups = [
-  {
-    label: "Gewicht",
-    units: [
-      { value: "g", label: "Gramm (g)" },
-      { value: "kg", label: "Kilogramm (kg)" },
-    ],
-  },
-  {
-    label: "Volumen",
-    units: [
-      { value: "ml", label: "Milliliter (ml)" },
-      { value: "l", label: "Liter (l)" },
-    ],
-  },
-  {
-    label: "Kochmaße",
-    units: [
-      { value: "TL", label: "Teelöffel (TL)" },
-      { value: "EL", label: "Esslöffel (EL)" },
-      { value: "Tasse", label: "Tasse" },
-      { value: "Prise", label: "Prise" },
-      { value: "Spritzer", label: "Spritzer" },
-      { value: "Handvoll", label: "Handvoll" },
-    ],
-  },
-  {
-    label: "Stück und Packungen",
-    units: [
-      { value: "Stück", label: "Stück" },
-      { value: "Bund", label: "Bund" },
-      { value: "Zehe", label: "Zehe" },
-      { value: "Dose", label: "Dose" },
-      { value: "Packung", label: "Packung" },
-      { value: "Päckchen", label: "Päckchen" },
-      { value: "Scheibe", label: "Scheibe" },
-      { value: "Blatt", label: "Blatt" },
-      { value: "Stange", label: "Stange" },
-      { value: "Kopf", label: "Kopf" },
-      { value: "Flasche", label: "Flasche" },
-      { value: "Glas", label: "Glas" },
-      { value: "Becher", label: "Becher" },
-      { value: "Zweig", label: "Zweig" },
-      { value: "Portion", label: "Portion" },
-    ],
-  },
-];
-
-const commonUnits = new Set(unitGroups.flatMap((group) => group.units.map((unit) => unit.value)));
 
 function UnitSelect({
   label,
@@ -106,14 +43,14 @@ function UnitSelect({
   return (
     <select className={className} aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">Einheit wählen</option>
-      {unitGroups.map((group) => (
+      {ingredientUnitGroups.map((group) => (
         <optgroup key={group.label} label={group.label}>
           {group.units.map((unit) => (
             <option key={unit.value} value={unit.value}>{unit.label}</option>
           ))}
         </optgroup>
       ))}
-      {value && !commonUnits.has(value) && (
+      {value && !commonIngredientUnits.has(value) && (
         <optgroup label="Bisherige Einheit">
           <option value={value}>{value}</option>
         </optgroup>
@@ -133,35 +70,7 @@ function initialIngredients(recipe?: Recipe): IngredientDraft[] {
     })) ?? [{ name: "", quantity: "", unit: "" }];
 }
 
-function initialSteps(recipe?: Recipe, ingredients = initialIngredients(recipe)): StepDraft[] {
-  if (!recipe) return [{ instruction: "", ingredients: [] }];
-  const ingredientIndexes = new Map(
-    recipe.recipe_ingredients.map((ingredient, index) => [ingredient.id, index]),
-  );
-  return recipe.recipe_steps
-    .slice()
-    .sort((a, b) => a.position - b.position)
-    .map((step) => ({
-      instruction: step.instruction,
-      ingredients: step.step_ingredients
-        .map((stepIngredient) => {
-          const ingredientIndex = ingredientIndexes.get(stepIngredient.recipe_ingredient_id);
-          if (ingredientIndex === undefined) return null;
-          const base = ingredients[ingredientIndex];
-          return {
-            ingredient_index: ingredientIndex,
-            quantity:
-              stepIngredient.quantity === null
-                ? base.quantity
-                : String(stepIngredient.quantity),
-            unit: stepIngredient.unit || base.unit,
-          };
-        })
-        .filter((entry): entry is StepIngredientDraft => entry !== null),
-    }));
-}
-
-export default function RecipeEditor({ initial, busy, onCancel, onSave, onDelete }: RecipeEditorProps) {
+export default function RecipeEditor({ initial, busy, error, onCancel, onSave, onDelete }: RecipeEditorProps) {
   const ingredients = initialIngredients(initial);
   const [title, setTitle] = useState(initial?.title ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -174,7 +83,6 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave, onDelete
   );
   const [emoji, setEmoji] = useState(initial?.emoji ?? "🍲");
   const [draftIngredients, setDraftIngredients] = useState(ingredients);
-  const [steps, setSteps] = useState(() => initialSteps(initial, ingredients));
   const [formError, setFormError] = useState("");
 
   function updateIngredient(index: number, patch: Partial<IngredientDraft>) {
@@ -187,47 +95,6 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave, onDelete
 
   function removeIngredient(index: number) {
     setDraftIngredients((current) => current.filter((_, ingredientIndex) => ingredientIndex !== index));
-    setSteps((current) =>
-      current.map((step) => ({
-        ...step,
-        ingredients: step.ingredients
-          .filter((ingredient) => ingredient.ingredient_index !== index)
-          .map((ingredient) => ({
-            ...ingredient,
-            ingredient_index: ingredient.ingredient_index > index
-              ? ingredient.ingredient_index - 1
-              : ingredient.ingredient_index,
-          })),
-      })),
-    );
-  }
-
-  function updateStep(index: number, patch: Partial<StepDraft>) {
-    setSteps((current) =>
-      current.map((step, stepIndex) => (stepIndex === index ? { ...step, ...patch } : step)),
-    );
-  }
-
-  function addStepIngredient(stepIndex: number) {
-    if (draftIngredients.length === 0) return;
-    const ingredient = draftIngredients[0];
-    updateStep(stepIndex, {
-      ingredients: [
-        ...steps[stepIndex].ingredients,
-        { ingredient_index: 0, quantity: ingredient.quantity, unit: ingredient.unit },
-      ],
-    });
-  }
-
-  function updateStepIngredient(
-    stepIndex: number,
-    ingredientIndex: number,
-    patch: Partial<StepIngredientDraft>,
-  ) {
-    const next = steps[stepIndex].ingredients.map((ingredient, index) =>
-      index === ingredientIndex ? { ...ingredient, ...patch } : ingredient,
-    );
-    updateStep(stepIndex, { ingredients: next });
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -242,23 +109,14 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave, onDelete
         unit: ingredient.unit.trim(),
       }))
       .filter((ingredient) => ingredient.name);
-    const ingredientIndexMap = new Map(
-      indexedIngredients.map((ingredient, index) => [ingredient.originalIndex, index]),
-    );
     const cleanIngredients = indexedIngredients.map((ingredient) => ({
       name: ingredient.name,
       quantity: ingredient.quantity,
       unit: ingredient.unit,
     }));
-    const cleanSteps = steps
-      .map((step) => ({
-        instruction: step.instruction.trim(),
-        ingredients: step.ingredients,
-      }))
-      .filter((step) => step.instruction);
 
-    if (!title.trim() || cleanIngredients.length === 0 || cleanSteps.length === 0) {
-      setFormError("Bitte gib einen Titel, mindestens eine Zutat und einen Zubereitungsschritt ein.");
+    if (!title.trim() || cleanIngredients.length === 0) {
+      setFormError("Bitte gib einen Titel und mindestens eine Zutat ein.");
       return;
     }
     if (sourceUrl.trim()) {
@@ -285,19 +143,6 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave, onDelete
         name: ingredient.name,
         quantity: ingredient.quantity || null,
         unit: ingredient.unit,
-      })),
-      steps: cleanSteps.map((step) => ({
-        instruction: step.instruction,
-        ingredients: step.ingredients.flatMap((ingredient) => {
-          const ingredientIndex = ingredientIndexMap.get(ingredient.ingredient_index);
-          if (ingredientIndex === undefined) return [];
-          return [{
-            ...ingredient,
-            ingredient_index: ingredientIndex,
-            quantity: ingredient.quantity.trim(),
-            unit: ingredient.unit.trim(),
-          }];
-        }),
       })),
     }).catch((error: unknown) => {
       setFormError(error instanceof Error ? error.message : "Das Rezept konnte nicht gespeichert werden.");
@@ -424,100 +269,7 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave, onDelete
         ))}
       </section>
 
-      <section className="editor-section">
-        <div className="section-title-row">
-          <div>
-            <h3>Zubereitung</h3>
-            <p>Ordne jedem Schritt die verwendeten Zutaten und Mengen zu.</p>
-          </div>
-          <button
-            type="button"
-            className="text-button"
-            onClick={() => setSteps((current) => [...current, { instruction: "", ingredients: [] }])}
-          >
-            <Plus size={16} /> Schritt
-          </button>
-        </div>
-        {steps.map((step, stepIndex) => (
-          <div className="step-edit-card" key={`step-${stepIndex}`}>
-            <div className="step-edit-heading">
-              <strong>Schritt {stepIndex + 1}</strong>
-              <button
-                type="button"
-                className="text-button danger-text"
-                onClick={() => setSteps((current) => current.filter((_, index) => index !== stepIndex))}
-                disabled={steps.length === 1}
-              >
-                <Trash2 size={15} /> Entfernen
-              </button>
-            </div>
-            <textarea
-              aria-label={`Anleitung Schritt ${stepIndex + 1}`}
-              rows={3}
-              placeholder="Was passiert in diesem Schritt?"
-              value={step.instruction}
-              onChange={(event) => updateStep(stepIndex, { instruction: event.target.value })}
-            />
-            {step.ingredients.map((stepIngredient, linkIndex) => (
-              <div className="ingredient-edit-row step-ingredient-row" key={`step-${stepIndex}-ingredient-${linkIndex}`}>
-                <select
-                  className="ingredient-name"
-                  aria-label={`Zutat in Schritt ${stepIndex + 1}`}
-                  value={stepIngredient.ingredient_index}
-                  onChange={(event) => {
-                    const ingredientIndex = Number(event.target.value);
-                    const base = draftIngredients[ingredientIndex];
-                    updateStepIngredient(stepIndex, linkIndex, {
-                      ingredient_index: ingredientIndex,
-                      quantity: base?.quantity ?? "",
-                      unit: base?.unit ?? "",
-                    });
-                  }}
-                >
-                  {draftIngredients.map((ingredient, ingredientIndex) => (
-                    <option key={ingredientIndex} value={ingredientIndex}>
-                      {ingredient.name || `Zutat ${ingredientIndex + 1}`}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="ingredient-quantity"
-                  aria-label="Schrittmenge"
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  placeholder="Menge"
-                  value={stepIngredient.quantity}
-                  onChange={(event) => updateStepIngredient(stepIndex, linkIndex, { quantity: event.target.value })}
-                />
-                <UnitSelect
-                  className="ingredient-unit-select"
-                  label="Einheit für Schrittzutat"
-                  value={stepIngredient.unit}
-                  onChange={(unit) => updateStepIngredient(stepIndex, linkIndex, { unit })}
-                />
-                <button
-                  type="button"
-                  className="icon-button subtle ingredient-remove"
-                  aria-label="Schrittzutat entfernen"
-                  onClick={() =>
-                    updateStep(stepIndex, {
-                      ingredients: step.ingredients.filter((_, index) => index !== linkIndex),
-                    })
-                  }
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))}
-            <button type="button" className="text-button" onClick={() => addStepIngredient(stepIndex)}>
-              <Plus size={15} /> Zutat für diesen Schritt
-            </button>
-          </div>
-        ))}
-      </section>
-
-      {formError && <p className="form-error" role="alert">{formError}</p>}
+      {(formError || error) && <p className="form-error" role="alert">{formError || error}</p>}
       <div className="form-actions">
         {initial && onDelete && (
           <button type="button" className="button button-quiet danger-text recipe-delete-button" onClick={() => void onDelete()} disabled={busy}>
