@@ -2,40 +2,54 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ImagePlus, Package, Pencil, Plus, ScanLine, Trash2, X } from "lucide-react";
 import { formatQuantity } from "../../lib/format";
 import { commonIngredientUnits, ingredientUnitGroups } from "../../lib/ingredient-units";
+import { pantryErrorMessage } from "../../lib/pantry-errors";
 import type { PantryItem } from "../../types";
 import BarcodeScanner from "./BarcodeScanner";
 
 export interface PantryItemSaveInput {
   id: string | null;
   name: string;
+  category: string;
   barcode: string;
   quantity: number;
   unit: string;
   imageFile: File | null;
   removeImage: boolean;
+  addToExisting: boolean;
 }
 
 interface PantryPageProps {
   items: PantryItem[];
   busy: boolean;
+  onFindByBarcode: (barcode: string) => Promise<PantryItem | null>;
   onSave: (item: PantryItemSaveInput) => Promise<void>;
   onDelete: (item: PantryItem) => Promise<void>;
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error && error.message
-    ? error.message
-    : "Der Vorrat konnte nicht gespeichert werden. Bitte versuche es noch einmal.";
-}
+const DEFAULT_CATEGORIES = [
+  "Gemüse",
+  "Obst",
+  "Milchprodukte",
+  "Fleisch & Fisch",
+  "Konserven",
+  "Nudeln & Reis",
+  "Backzutaten",
+  "Gewürze",
+  "Getränke",
+  "Tiefkühl",
+  "Sonstiges",
+];
 
-export default function PantryPage({ items, busy, onSave, onDelete }: PantryPageProps) {
+export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDelete }: PantryPageProps) {
   const [formOpen, setFormOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PantryItem | null>(null);
   const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
   const [barcode, setBarcode] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
+  const [addingToExisting, setAddingToExisting] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [removeImage, setRemoveImage] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -59,17 +73,23 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
     const sortedItems = items.slice().sort((a, b) => a.name.localeCompare(b.name, "de-DE"));
     if (!needle) return sortedItems;
     return sortedItems.filter((item) =>
-      `${item.name} ${item.barcode}`.toLocaleLowerCase("de-DE").includes(needle),
+      `${item.name} ${item.category} ${item.barcode}`.toLocaleLowerCase("de-DE").includes(needle),
     );
   }, [items, search]);
+  const categories = useMemo(() => {
+    const savedCategories = items.map((item) => item.category.trim()).filter(Boolean);
+    return Array.from(new Set([...DEFAULT_CATEGORIES, ...savedCategories]));
+  }, [items]);
   const hasPreviewImage = Boolean(previewUrl || (!removeImage && editingItem?.image_url));
 
   function resetForm(item: PantryItem | null) {
     setEditingItem(item);
     setName(item?.name ?? "");
+    setCategory(item?.category ?? "");
     setBarcode(item?.barcode ?? "");
     setQuantity(item ? String(item.quantity) : "");
     setUnit(item?.unit ?? "");
+    setAddingToExisting(false);
     setImageFile(null);
     setRemoveImage(false);
     setFormError("");
@@ -77,14 +97,20 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
     setFormOpen(true);
   }
 
-  function useScannedBarcode(scannedBarcode: string) {
-    const existing = items.find((item) => item.barcode === scannedBarcode);
-    resetForm(existing ?? null);
-    if (existing) {
-      setPageError(`„${existing.name}“ ist bereits im Vorrat. Passe die vorhandene Menge an.`);
-    }
-    setBarcode(scannedBarcode);
+  async function useScannedBarcode(scannedBarcode: string) {
     setScannerOpen(false);
+    try {
+      const existing = await onFindByBarcode(scannedBarcode);
+      resetForm(existing);
+      if (existing) {
+        setQuantity("");
+        setAddingToExisting(true);
+        setPageError(`„${existing.name}“ ist bereits im Vorrat (${formatQuantity(existing.quantity, existing.unit)}). Die gescannte Menge wird beim Speichern addiert.`);
+      }
+      setBarcode(scannedBarcode);
+    } catch (reason) {
+      setPageError(pantryErrorMessage(reason));
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -99,6 +125,10 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
       setFormError("Bitte gib eine gültige Vorratsmenge ein.");
       return;
     }
+    if (addingToExisting && parsedQuantity <= 0) {
+      setFormError("Bitte gib eine zugekaufte Menge größer als 0 ein.");
+      return;
+    }
     if (imageFile && (!imageFile.type.startsWith("image/") || imageFile.size > 8 * 1024 * 1024)) {
       setFormError("Bitte wähle ein Bild mit höchstens 8 MB aus.");
       return;
@@ -107,16 +137,18 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
       await onSave({
         id: editingItem?.id ?? null,
         name: name.trim(),
+        category: category.trim(),
         barcode: barcode.trim(),
         quantity: parsedQuantity,
         unit,
         imageFile,
         removeImage,
+        addToExisting: addingToExisting,
       });
       setFormOpen(false);
       setPageError("");
     } catch (reason) {
-      setFormError(errorText(reason));
+      setFormError(pantryErrorMessage(reason));
     }
   }
 
@@ -126,7 +158,7 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
     try {
       await onDelete(item);
     } catch (reason) {
-      setPageError(errorText(reason));
+      setPageError(pantryErrorMessage(reason));
     }
   }
 
@@ -170,6 +202,7 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
               <div className="pantry-card-content">
                 <div>
                   <h2>{item.name}</h2>
+                  {item.category && <span className="pantry-category-tag">{item.category}</span>}
                   {item.barcode && <p className="pantry-barcode"><ScanLine size={13} /> {item.barcode}</p>}
                 </div>
                 <div className="pantry-card-actions">
@@ -212,6 +245,14 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
                 <input autoFocus value={name} onChange={(event) => setName(event.target.value)} required maxLength={120} placeholder="z. B. Hafermilch" />
               </label>
               <label className="field-label">
+                Kategorie
+                <input list="pantry-category-options" value={category} onChange={(event) => setCategory(event.target.value)} maxLength={60} placeholder="z. B. Gemüse" />
+                <datalist id="pantry-category-options">
+                  {categories.map((option) => <option key={option} value={option} />)}
+                </datalist>
+                <small>Vorschläge auswählen oder eine eigene Kategorie eingeben.</small>
+              </label>
+              <label className="field-label">
                 Barcode
                 <span className="pantry-barcode-input">
                   <input value={barcode} onChange={(event) => setBarcode(event.target.value)} maxLength={64} placeholder="Optional" />
@@ -220,12 +261,12 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
               </label>
               <div className="pantry-quantity-row">
                 <label className="field-label">
-                  Vorhandene Menge
+                  {addingToExisting ? "Zugekaufte Menge" : "Vorhandene Menge"}
                   <input type="number" min="0" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required placeholder="z. B. 2" />
                 </label>
                 <label className="field-label">
                   Einheit
-                  <select value={unit} onChange={(event) => setUnit(event.target.value)}>
+                  <select value={unit} onChange={(event) => setUnit(event.target.value)} disabled={addingToExisting}>
                     <option value="">Einheit wählen</option>
                     {ingredientUnitGroups.map((group) => (
                       <optgroup key={group.label} label={group.label}>
@@ -238,6 +279,7 @@ export default function PantryPage({ items, busy, onSave, onDelete }: PantryPage
                   </select>
                 </label>
               </div>
+              {addingToExisting && <p className="pantry-inline-note">Die neue Menge wird in {unit || "derselben Einheit"} zum vorhandenen Bestand addiert.</p>}
               <div className="pantry-photo-row">
                 {hasPreviewImage && (
                   <img className="pantry-photo-preview" src={previewUrl || editingItem?.image_url || ""} alt="Vorschau des Produktbilds" />

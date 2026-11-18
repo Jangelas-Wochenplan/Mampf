@@ -439,6 +439,7 @@ create table if not exists public.pantry_items (
   id uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households(id) on delete cascade,
   name text not null check (length(btrim(name)) between 1 and 120),
+  category text not null default '' check (length(category) <= 60),
   barcode text not null default '' check (length(barcode) <= 64),
   quantity numeric(12, 3) not null default 0 check (quantity >= 0),
   unit text not null default '' check (length(unit) <= 40),
@@ -448,7 +449,11 @@ create table if not exists public.pantry_items (
   check (image_path is null or image_path like (household_id::text || '/%'))
 );
 
+alter table public.pantry_items
+  add column if not exists category text not null default '' check (length(category) <= 60);
+
 create index if not exists pantry_items_household_name on public.pantry_items (household_id, lower(name));
+create index if not exists pantry_items_household_category on public.pantry_items (household_id, category);
 create unique index if not exists pantry_items_household_barcode on public.pantry_items (household_id, barcode)
   where barcode <> '';
 
@@ -460,6 +465,49 @@ create policy pantry_items_member_access on public.pantry_items
   for all to authenticated
   using (public.is_household_member(household_id))
   with check (public.is_household_member(household_id));
+
+create or replace function public.add_pantry_stock(
+  p_item_id uuid,
+  p_quantity numeric,
+  p_name text,
+  p_category text,
+  p_barcode text,
+  p_unit text,
+  p_image_path text
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  updated_id uuid;
+begin
+  if p_quantity is null or p_quantity <= 0 then
+    raise exception 'Added pantry quantity must be greater than zero' using errcode = '22023';
+  end if;
+
+  update public.pantry_items as item
+  set name = p_name,
+      category = coalesce(p_category, ''),
+      barcode = coalesce(p_barcode, ''),
+      quantity = item.quantity + p_quantity,
+      unit = coalesce(p_unit, ''),
+      image_path = p_image_path,
+      updated_at = now()
+  where item.id = p_item_id
+  returning item.id into updated_id;
+
+  if updated_id is null then
+    raise exception 'Pantry item was not found or is inaccessible' using errcode = 'P0002';
+  end if;
+
+  return updated_id;
+end
+$function$;
+
+revoke all on function public.add_pantry_stock(uuid, numeric, text, text, text, text, text) from public, anon;
+grant execute on function public.add_pantry_stock(uuid, numeric, text, text, text, text, text) to authenticated;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

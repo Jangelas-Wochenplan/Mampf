@@ -7,6 +7,7 @@ function pantryItem(name: string, quantity: number, unit: string): PantryItem {
     id: `${name}-${unit}`,
     household_id: "household",
     name,
+    category: "",
     barcode: "",
     quantity,
     unit,

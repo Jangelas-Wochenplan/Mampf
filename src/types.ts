@@ -65,6 +65,7 @@ export interface PantryItem {
   id: string;
   household_id: string;
   name: string;
+  category: string;
   barcode: string;
   quantity: number;
   unit: string;
