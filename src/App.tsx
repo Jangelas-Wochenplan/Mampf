@@ -42,6 +42,20 @@ function errorText(error: unknown): string {
   return "Das hat leider nicht geklappt. Bitte versuche es noch einmal.";
 }
 
+async function functionErrorText(error: unknown): Promise<string> {
+  if (error && typeof error === "object" && "context" in error && error.context instanceof Response) {
+    try {
+      const details: unknown = await error.context.clone().json();
+      if (details && typeof details === "object" && "error" in details && typeof details.error === "string") {
+        return details.error;
+      }
+    } catch {
+      return errorText(error);
+    }
+  }
+  return errorText(error);
+}
+
 function weekDates(weekStart: string): PlannedDay[] {
   return Array.from({ length: 7 }, (_, index) => ({
     date: addDays(weekStart, index),
@@ -49,13 +63,14 @@ function weekDates(weekStart: string): PlannedDay[] {
   }));
 }
 
-function localName(email: string | undefined): string {
+function localName(email: string | undefined, username?: unknown): string {
+  if (typeof username === "string" && username.trim()) return username.trim();
   if (!email) return "Kochfreund";
   return email.split("@")[0].replace(/[._-]+/g, " ").trim();
 }
 
 function AuthScreen({ client }: { client: NonNullable<typeof supabase> }) {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [resetSent, setResetSent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -65,19 +80,34 @@ function AuthScreen({ client }: { client: NonNullable<typeof supabase> }) {
     event.preventDefault();
     setBusy(true);
     setError("");
-    const { error: signInError } = await client.auth.signInWithPassword({ email, password });
-    if (signInError) setError(signInError.message);
-    setBusy(false);
+    try {
+      if (identifier.includes("@")) {
+        const { error: signInError } = await client.auth.signInWithPassword({ email: identifier.trim(), password });
+        if (signInError) throw signInError;
+      } else {
+        const { data, error: loginError } = await client.functions.invoke<{
+          session?: Pick<Session, "access_token" | "refresh_token">;
+        }>("login-with-username", { body: { username: identifier.trim(), password } });
+        if (loginError) throw new Error(await functionErrorText(loginError));
+        if (!data?.session) throw new Error("Anmeldung fehlgeschlagen. Bitte versuche es erneut.");
+        const { error: sessionError } = await client.auth.setSession(data.session);
+        if (sessionError) throw sessionError;
+      }
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function sendReset() {
-    if (!email.trim()) {
-      setError("Gib zuerst deine E-Mail-Adresse ein.");
+    if (!identifier.includes("@")) {
+      setError("Gib zum Zurücksetzen bitte deine E-Mail-Adresse ein.");
       return;
     }
     setBusy(true);
     setError("");
-    const { error: resetError } = await client.auth.resetPasswordForEmail(email.trim(), {
+    const { error: resetError } = await client.auth.resetPasswordForEmail(identifier.trim(), {
       redirectTo: new URL(import.meta.env.BASE_URL, window.location.href).toString(),
     });
     if (resetError) setError(resetError.message);
@@ -106,14 +136,14 @@ function AuthScreen({ client }: { client: NonNullable<typeof supabase> }) {
           <p className="muted-copy">Melde dich an und plant eure Lieblingsgerichte gemeinsam.</p>
           <form onSubmit={signIn}>
             <label className="field-label">
-              E-Mail-Adresse
+              Nutzername oder E-Mail-Adresse
               <input
-                type="email"
-                autoComplete="email"
+                type="text"
+                autoComplete="username"
                 required
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="du@beispiel.de"
+                value={identifier}
+                onChange={(event) => setIdentifier(event.target.value)}
+                placeholder="Jan oder du@beispiel.de"
               />
             </label>
             <label className="field-label">
@@ -138,10 +168,89 @@ function AuthScreen({ client }: { client: NonNullable<typeof supabase> }) {
           </form>
           <div className="invite-note">
             <UsersRound size={17} />
-            <span>Neue Konten werden über eine Einladung zum Haushalt erstellt.</span>
+            <span>Neue Konten werden über einen persönlichen Einrichtungs- oder Einladungslink erstellt.</span>
           </div>
         </div>
       </section>
+    </main>
+  );
+}
+
+function RegistrationScreen({
+  invitationToken,
+  ownerSetupToken,
+  onRegister,
+  busy,
+}: {
+  invitationToken: string | null;
+  ownerSetupToken: string | null;
+  onRegister: (values: { email: string; username: string; password: string }) => Promise<void>;
+  busy: boolean;
+}) {
+  const isOwnerSetup = Boolean(ownerSetupToken);
+  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState(isOwnerSetup ? "Jan" : "");
+  const [password, setPassword] = useState("");
+  const [repeatPassword, setRepeatPassword] = useState("");
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    if (password.length < 8) {
+      setError("Dein Passwort sollte mindestens acht Zeichen lang sein.");
+      return;
+    }
+    if (password !== repeatPassword) {
+      setError("Die Passwörter stimmen nicht überein.");
+      return;
+    }
+    await onRegister({ email: email.trim(), username: isOwnerSetup ? "Jan" : username.trim(), password })
+      .catch((reason: unknown) => setError(errorText(reason)));
+  }
+
+  return (
+    <main className="setup-page">
+      <div className="setup-mark">{isOwnerSetup ? "🍅" : "🥄"}</div>
+      <p className="eyebrow">{isOwnerSetup ? "Der erste Platz am Tisch" : "Einladung angenommen"}</p>
+      <h1>{isOwnerSetup ? "Willkommen, Jan." : "Mach es dir bequem."}</h1>
+      <p>
+        {isOwnerSetup
+          ? "Trage deine E-Mail-Adresse ein und lege jetzt dein persönliches Passwort für den Hauptadmin-Zugang fest."
+          : "Erstelle dein Konto, um Rezepte und Wochenpläne gemeinsam zu bearbeiten."}
+      </p>
+      <form className="setup-form" onSubmit={submit}>
+        <label className="field-label">
+          E-Mail-Adresse
+          <input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
+        </label>
+        <label className="field-label">
+          Nutzername
+          <input
+            type="text"
+            autoComplete="username"
+            required
+            minLength={3}
+            maxLength={24}
+            readOnly={isOwnerSetup}
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+          />
+        </label>
+        <label className="field-label">
+          Passwort festlegen
+          <input type="password" autoComplete="new-password" minLength={8} required value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
+        <label className="field-label">
+          Passwort wiederholen
+          <input type="password" autoComplete="new-password" required value={repeatPassword} onChange={(event) => setRepeatPassword(event.target.value)} />
+        </label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="button button-primary" disabled={busy}>
+          {busy ? "Konto wird eingerichtet …" : isOwnerSetup ? "Hauptadmin-Konto erstellen" : "Konto erstellen"} <ArrowRight size={17} />
+        </button>
+      </form>
+      {!invitationToken && !ownerSetupToken && <p className="form-error" role="alert">Dieser Registrierungslink ist unvollständig.</p>}
     </main>
   );
 }
@@ -315,11 +424,10 @@ function InviteDialog({
   busy,
 }: {
   onClose: () => void;
-  onInvite: (email: string) => Promise<{ sent: boolean; inviteUrl?: string }>;
+  onInvite: () => Promise<string>;
   busy: boolean;
 }) {
-  const [email, setEmail] = useState("");
-  const [inviteResult, setInviteResult] = useState<{ sent: boolean; inviteUrl?: string } | null>(null);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
 
@@ -339,53 +447,40 @@ function InviteDialog({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    await onInvite(email.trim()).then(setInviteResult).catch((reason: unknown) => setError(errorText(reason)));
+    await onInvite().then(setInviteUrl).catch((reason: unknown) => setError(errorText(reason)));
   }
-
-  const inviteUrl = inviteResult?.inviteUrl;
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
       <section className="invite-dialog modal-card" role="dialog" aria-modal="true" aria-labelledby="invite-title" onClick={(event) => event.stopPropagation()}>
         <button className="icon-button detail-close" onClick={onClose} aria-label="Schließen">×</button>
         <div className="invite-dialog-icon"><UsersRound size={22} /></div>
-        {inviteResult ? (
+        {inviteUrl ? (
           <>
-            <p className="eyebrow">{inviteResult.sent ? "Einladung ist unterwegs" : "Einladung zum Teilen"}</p>
-            <h2>{inviteResult.sent ? "Ein Platz am Tisch ist reserviert." : "Der Einladungslink ist bereit."}</h2>
-            <p>
-              {inviteResult.sent
-                ? <>Wir haben eine Einladung an <strong>{email}</strong> gesendet. Der Link ist sieben Tage gültig.</>
-                : <>Diese E-Mail hat bereits ein Mampf-Konto. Teile den persönlichen Link mit <strong>{email}</strong>; er ist sieben Tage gültig.</>}
-            </p>
-            <p className="invite-link-note">Eine neue Einladung ersetzt einen zuvor ausgestellten, noch offenen Link.</p>
-            {inviteUrl && (
-              <div className="invite-link-box">
-                <input aria-label="Persönlicher Einladungslink" readOnly value={inviteUrl} />
-                <button
-                  type="button"
-                  className="button button-outline"
-                  onClick={() => void copyInvitationLink(inviteUrl)}
-                >
-                  {copied ? "Kopiert" : "Link kopieren"}
-                </button>
-              </div>
-            )}
+            <p className="eyebrow">Einladung zum Teilen</p>
+            <h2>Der Einladungslink ist bereit.</h2>
+            <p>Teile den persönlichen Link direkt mit deinem Haushaltsmitglied. Er ist sieben Tage gültig und kann nur einmal verwendet werden.</p>
+            <div className="invite-link-box">
+              <input aria-label="Persönlicher Einladungslink" readOnly value={inviteUrl} />
+              <button
+                type="button"
+                className="button button-outline"
+                onClick={() => void copyInvitationLink(inviteUrl)}
+              >
+                {copied ? "Kopiert" : "Link kopieren"}
+              </button>
+            </div>
             <button className="button button-primary" onClick={onClose}>Fertig</button>
           </>
         ) : (
           <>
             <p className="eyebrow">Gemeinsam schmeckt’s besser</p>
             <h2 id="invite-title">Jemanden einladen</h2>
-            <p>Die Person bekommt einen persönlichen Link und kann danach Rezepte und Pläne mit euch bearbeiten.</p>
+            <p>Erstelle einen einmaligen Link und teile ihn direkt mit der Person. Sie legt beim Registrieren E-Mail, Nutzernamen und Passwort selbst fest.</p>
             <form onSubmit={submit}>
-              <label className="field-label">
-                E-Mail-Adresse
-                <input type="email" autoFocus required value={email} onChange={(event) => setEmail(event.target.value)} />
-              </label>
               {error && <p className="form-error" role="alert">{error}</p>}
               <button className="button button-primary" disabled={busy}>
-                {busy ? "Wird gesendet …" : "Einladung senden"} <ArrowRight size={17} />
+                {busy ? "Wird erstellt …" : "Einladungslink erstellen"} <ArrowRight size={17} />
               </button>
             </form>
           </>
@@ -476,12 +571,13 @@ export default function App() {
     setWorkspaceReady(false);
     setError("");
     async function loadMembership() {
-      const urlInviteToken = new URLSearchParams(window.location.search).get("household_invite");
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlInviteToken = urlParams.get("invite") || urlParams.get("household_invite");
       const metadataToken = activeSession.user.user_metadata.household_invitation_token;
       const rawToken = urlInviteToken || (typeof metadataToken === "string" ? metadataToken : null);
       if (rawToken && !handledInviteTokens.current.has(rawToken)) {
         setPendingInviteToken(rawToken);
-        const urlRequiresPassword = new URLSearchParams(window.location.search).get("set_password") === "true";
+        const urlRequiresPassword = urlParams.get("set_password") === "true";
         setInviteRequiresPassword(urlRequiresPassword || (!urlInviteToken && Boolean(metadataToken)));
         setWorkspaceReady(true);
         return;
@@ -761,22 +857,63 @@ export default function App() {
     }
   }
 
-  async function inviteMember(email: string): Promise<{ sent: boolean; inviteUrl?: string }> {
+  async function inviteMember(): Promise<string> {
     if (!client || !household) throw new Error("Haushalt nicht verfügbar.");
     const { data, error: inviteError } = await client.functions.invoke("invite-household-member", {
-      body: { email, household_id: household.id },
+      body: { household_id: household.id },
     });
     if (inviteError) {
-      if ("context" in inviteError && inviteError.context instanceof Response) {
-        const details = await inviteError.context.clone().json() as { error?: unknown };
-        if (typeof details.error === "string") throw new Error(details.error);
-      }
-      throw inviteError;
+      throw new Error(await functionErrorText(inviteError));
     }
     if (data?.error) throw new Error(data.error);
-    if (data?.sent === true) return { sent: true };
-    if (typeof data?.invite_url === "string") return { sent: false, inviteUrl: data.invite_url };
+    if (typeof data?.invite_url === "string") return data.invite_url;
     throw new Error("Die Einladung wurde nicht bestätigt. Bitte versuche es noch einmal.");
+  }
+
+  async function registerAccount(values: { email: string; username: string; password: string }) {
+    if (!client) throw new Error("Supabase ist nicht verbunden.");
+    const url = new URL(window.location.href);
+    const invitationToken = url.searchParams.get("invite");
+    const ownerSetupToken = url.searchParams.get("owner_setup");
+    if (Boolean(invitationToken) === Boolean(ownerSetupToken)) {
+      throw new Error("Dieser Registrierungslink ist ungültig oder unvollständig.");
+    }
+
+    setBusy(true);
+    try {
+      const { data, error: registrationError } = await client.functions.invoke<{
+        registered?: boolean;
+        session?: Pick<Session, "access_token" | "refresh_token">;
+      }>("complete-household-registration", {
+        body: {
+          ...(ownerSetupToken ? { owner_setup_token: ownerSetupToken } : { invitation_token: invitationToken }),
+          email: values.email,
+          username: values.username,
+          password: values.password,
+        },
+      });
+      if (registrationError) throw new Error(await functionErrorText(registrationError));
+      if (data?.session) {
+        const { error: sessionError } = await client.auth.setSession(data.session);
+        if (sessionError) throw sessionError;
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.delete("owner_setup");
+        currentUrl.searchParams.delete("invite");
+        currentUrl.searchParams.delete("household_invite");
+        window.history.replaceState(null, "", currentUrl);
+        return;
+      }
+      if (data?.registered) {
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.delete("owner_setup");
+        currentUrl.searchParams.delete("invite");
+        window.history.replaceState(null, "", currentUrl);
+        throw new Error("Dein Konto wurde erstellt. Bitte melde dich mit deinem Nutzernamen und Passwort an.");
+      }
+      throw new Error("Das Konto konnte nicht eingerichtet werden.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function acceptInvitation(password: string | null) {
@@ -797,6 +934,7 @@ export default function App() {
       setPendingInviteToken(null);
       setInviteRequiresPassword(false);
       const currentUrl = new URL(window.location.href);
+      currentUrl.searchParams.delete("invite");
       currentUrl.searchParams.delete("household_invite");
       currentUrl.searchParams.delete("set_password");
       window.history.replaceState(null, "", currentUrl);
@@ -850,6 +988,19 @@ export default function App() {
             setNotice("Dein Passwort wurde aktualisiert.");
           }).finally(() => setBusy(false));
         }}
+      />
+    );
+  }
+  const registrationParams = new URLSearchParams(window.location.search);
+  const invitationToken = registrationParams.get("invite");
+  const ownerSetupToken = registrationParams.get("owner_setup");
+  if (!session && (invitationToken || ownerSetupToken)) {
+    return (
+      <RegistrationScreen
+        invitationToken={invitationToken}
+        ownerSetupToken={ownerSetupToken}
+        onRegister={registerAccount}
+        busy={busy}
       />
     );
   }
@@ -918,8 +1069,8 @@ export default function App() {
             </button>
           )}
           <div className="profile-menu" title={session.user.email ?? ""}>
-            <span className="avatar">{localName(session.user.email)[0]?.toLocaleUpperCase("de-DE") ?? "M"}</span>
-            <span className="profile-name">{localName(session.user.email)}</span>
+            <span className="avatar">{localName(session.user.email, session.user.user_metadata.username)[0]?.toLocaleUpperCase("de-DE") ?? "M"}</span>
+            <span className="profile-name">{localName(session.user.email, session.user.user_metadata.username)}</span>
             <button
               className="icon-button logout-button"
               aria-label="Abmelden"
@@ -945,7 +1096,7 @@ export default function App() {
             <section className="greeting-row">
               <div>
                 <p className="eyebrow">{todayLabel}</p>
-                <h1>Was gibt’s heute, {localName(session.user.email)}?</h1>
+                <h1>Was gibt’s heute, {localName(session.user.email, session.user.user_metadata.username)}?</h1>
                 <p>Ein guter Abend beginnt mit einem guten Plan.</p>
               </div>
               <button className="button button-quiet greeting-plan-button" onClick={() => setView("plan")}>
@@ -1225,11 +1376,11 @@ export default function App() {
         <InviteDialog
           busy={busy}
           onClose={() => setInviteOpen(false)}
-          onInvite={async (email) => {
+          onInvite={async () => {
             setBusy(true);
             setError("");
             try {
-              return await inviteMember(email);
+              return await inviteMember();
             } catch (reason) {
               setError(errorText(reason));
               throw reason;

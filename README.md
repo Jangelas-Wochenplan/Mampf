@@ -36,23 +36,33 @@ These are public browser configuration values, not secrets. The site is served a
 ## Supabase setup
 
 1. Create a Supabase project and configure the two public runtime variables above in the app environment.
-2. Disable public sign-ups in **Authentication → Settings → User Signups**, then create the first household owner account in **Authentication → Users**. Additional accounts are created from household invitations.
-3. Link the Supabase CLI to the new project and apply the database migration:
+2. Keep public sign-ups disabled in **Authentication → Settings → User Signups**. The app creates accounts only through one-time owner setup and household invitation links.
+3. Link the Supabase CLI to the new project and apply the database migrations:
 
    ```sh
    supabase link --project-ref <your-project-ref>
    supabase db push
    ```
 
-4. In Supabase **Authentication → URL Configuration**, set the site URL to `https://jangelas-wochenplan.github.io/Mampf/` and allow `https://jangelas-wochenplan.github.io/Mampf/**` as a redirect URL. Configure email delivery and the invitation email template for the app URL.
-5. Set the invitation function's server-side `APP_ORIGIN` secret to the app URL, including `/Mampf/`, and deploy the function:
+4. In Supabase **Authentication → URL Configuration**, set the site URL to `https://jangelas-wochenplan.github.io/Mampf/` and allow `https://jangelas-wochenplan.github.io/Mampf/**` as a redirect URL. Configure email delivery if you want to use password-reset emails; household invitations are shared manually and do not send email.
+5. Set the Edge Functions' server-side `APP_ORIGIN` secret to the app URL, including `/Mampf/`, and deploy the account and invitation functions:
 
    ```sh
    supabase secrets set APP_ORIGIN=https://jangelas-wochenplan.github.io/Mampf/
    supabase functions deploy invite-household-member
+   supabase functions deploy login-with-username
+   supabase functions deploy complete-household-registration
    ```
 
-   For local development, `APP_ORIGIN` may use `http://localhost:<port>/`. Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to Edge Functions. The invitation function validates the caller as a household owner; the service-role key is never sent to the browser.
-6. Sign in as the initial owner, create the household, then invite other members by email. New accounts receive an email invitation; for an existing Mampf account, share the generated one-time link. Invitation tokens are random, stored only as hashes, expire after seven days, and can be accepted only by the invited email account. RLS policies restrict household data to its members.
+   For local development, `APP_ORIGIN` may use `http://localhost:<port>/`. Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to Edge Functions. The service-role key is never sent to the browser.
+6. In the Supabase SQL Editor, create Jan's one-time setup link:
 
-The migration creates the household, invitation, recipe, meal-plan, and shopping-list schema. Recipe and plan edits are committed through database functions so their related rows are saved atomically. GitHub Pages hosts the static app; Supabase must be configured separately for authentication and shared data.
+   ```sql
+   select 'https://jangelas-wochenplan.github.io/Mampf/?owner_setup='
+     || public.create_owner_setup_invite() as setup_url;
+   ```
+
+   Open the returned link privately. The registration form fixes the username to `Jan` and lets Jan enter an email address and choose a password. The link can be used once, expires after seven days, and can only be generated before a household has been created. After registration, create the household in the app; Jan becomes its owner.
+7. As Jan, use **Mitglied einladen** to generate a one-time link and share it manually. The invited person chooses their email, username, and password while registering. These links are stored as hashes, expire after seven days, and can be used once. RLS policies restrict household data to its members.
+
+The migrations create the household, profile, invitation, recipe, meal-plan, and shopping-list schema. Recipe and plan edits are committed through database functions so their related rows are saved atomically. GitHub Pages hosts the static app; Supabase must be configured separately for authentication and shared data.
