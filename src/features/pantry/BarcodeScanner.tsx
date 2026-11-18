@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Camera, ScanLine, X } from "lucide-react";
-import { isValidProductBarcode, StableBarcodeReader } from "../../lib/barcode-scan";
+import { Camera, Focus, ScanLine, X } from "lucide-react";
+import { isProductBarcodeFormat, StableBarcodeReader } from "../../lib/barcode-scan";
 
 interface BarcodeDetectorApi {
-  detect(source: HTMLVideoElement): Promise<Array<{ rawValue: string; format: string }>>;
+  detect(source: HTMLVideoElement): Promise<Array<{ rawValue: string; format?: string }>>;
 }
 
 interface BarcodeDetectorConstructor {
-  new(options?: { formats: string[] }): BarcodeDetectorApi;
-  getSupportedFormats?: () => Promise<string[]>;
+  new(): BarcodeDetectorApi;
 }
 
 interface WindowWithBarcodeDetector extends Window {
   BarcodeDetector?: BarcodeDetectorConstructor;
+}
+
+interface FocusTrackCapabilities extends MediaTrackCapabilities {
+  focusMode?: string[];
+}
+
+interface FocusTrackConstraintSet extends MediaTrackConstraintSet {
+  focusMode?: string;
 }
 
 interface BarcodeScannerProps {
@@ -23,10 +30,13 @@ interface BarcodeScannerProps {
 export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const onDetectedRef = useRef(onDetected);
+  const focusTrackRef = useRef<MediaStreamTrack | null>(null);
+  const focusModesRef = useRef<string[]>([]);
   const [manualBarcode, setManualBarcode] = useState("");
   const [detectedBarcode, setDetectedBarcode] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraAvailable, setCameraAvailable] = useState(false);
+  const [focusAvailable, setFocusAvailable] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -52,31 +62,46 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
           setMessage("Die Kamera ist in diesem Browser nicht verfügbar. Du kannst den Barcode manuell eingeben.");
           return;
         }
-        let supportedFormats: string[] | undefined;
-        try {
-          supportedFormats = await BrowserDetector.getSupportedFormats?.();
-        } catch {
-          supportedFormats = undefined;
-        }
-        const productFormats = ["ean_13", "ean_8", "upc_a", "upc_e", "itf", "code_128"];
-        const formats = supportedFormats
-          ? productFormats.filter((format) => supportedFormats.includes(format))
-          : [];
-        const detector = new BrowserDetector(formats.length ? { formats } : undefined);
+        const detector = new BrowserDetector();
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode: { ideal: "environment" } },
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+          },
         });
         if (!active) {
           stream.getTracks().forEach((track) => track.stop());
           return;
+        }
+        const videoTrack = stream.getVideoTracks()[0];
+        let focusMessage = "";
+        if (videoTrack) {
+          focusTrackRef.current = videoTrack;
+          try {
+            const focusModes = (videoTrack.getCapabilities() as FocusTrackCapabilities).focusMode ?? [];
+            focusModesRef.current = focusModes;
+            setFocusAvailable(focusModes.includes("continuous") || focusModes.includes("single-shot"));
+            const focusMode = focusModes.includes("continuous")
+              ? "continuous"
+              : focusModes.includes("single-shot") ? "single-shot" : null;
+            if (focusMode) {
+              await videoTrack.applyConstraints({
+                advanced: [{ focusMode } as FocusTrackConstraintSet],
+              });
+            }
+          } catch {
+            focusMessage = "Der Autofokus ließ sich nicht automatisch einstellen. Tippe auf „Fokussieren“ oder bewege den Code langsam näher.";
+          }
         }
         const video = videoRef.current;
         if (!video) return;
         video.srcObject = stream;
         await video.play();
         setCameraReady(true);
-        setMessage("Halte den Code ruhig und mittig im Rahmen. Nach mehreren gleichen Messungen kannst du den Wert prüfen.");
+        setMessage(focusMessage || "Halte den Code ruhig und mittig im Rahmen. Nach mehreren gleichen Messungen kannst du den Wert prüfen.");
         const stableReader = new StableBarcodeReader(3);
 
         async function scanFrame() {
@@ -84,7 +109,12 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
           try {
             if (video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
               const results = await detector.detect(video);
-              const candidate = results.find((result) => isValidProductBarcode(result.rawValue.trim(), result.format));
+              const candidate = results.find((result) => {
+                const formatAllowed = !result.format
+                  || result.format === "unknown"
+                  || isProductBarcodeFormat(result.format);
+                return formatAllowed && result.rawValue.trim().length >= 4;
+              });
               const barcode = stableReader.observe(candidate?.rawValue.trim() ?? null);
               if (barcode) {
                 setManualBarcode(barcode);
@@ -114,6 +144,7 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
     return () => {
       active = false;
       window.clearTimeout(scanTimer);
+      focusTrackRef.current = null;
       stream?.getTracks().forEach((track) => track.stop());
     };
   }, []);
@@ -122,6 +153,25 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
     event.preventDefault();
     const barcode = manualBarcode.trim();
     if (barcode) onDetectedRef.current(barcode);
+  }
+
+  async function focusCamera() {
+    const track = focusTrackRef.current;
+    if (!track) return;
+    const modes = focusModesRef.current;
+    const focusMode = modes.includes("single-shot")
+      ? "single-shot"
+      : modes.includes("continuous") ? "continuous" : null;
+    if (!focusMode) {
+      setMessage("Diese Kamera bietet keinen steuerbaren Fokus. Bewege den Code langsam näher oder weiter weg.");
+      return;
+    }
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode } as FocusTrackConstraintSet] });
+      setMessage("Fokus wird neu eingestellt. Halte den Code kurz ruhig.");
+    } catch {
+      setMessage("Der Fokus ließ sich nicht neu einstellen. Bewege den Code langsam näher oder weiter weg.");
+    }
   }
 
   return (
@@ -144,6 +194,11 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
           {cameraAvailable && <video ref={videoRef} autoPlay muted playsInline aria-label="Kamerabild zum Scannen des Barcodes" />}
           {!cameraReady && <div><Camera size={28} /><span>{cameraAvailable ? "Kamera wird vorbereitet …" : "Automatisches Scannen nicht verfügbar"}</span></div>}
           {cameraReady && <span className={`barcode-scan-guide${detectedBarcode ? " barcode-scan-guide-detected" : ""}`} aria-hidden="true" />}
+          {cameraReady && focusAvailable && (
+            <button type="button" className="barcode-focus-button" onClick={() => void focusCamera()}>
+              <Focus size={15} /> Fokussieren
+            </button>
+          )}
         </div>
         {message && <p className="pantry-scan-message" role="status">{message}</p>}
         <form className="pantry-barcode-form" onSubmit={submitManualBarcode}>
