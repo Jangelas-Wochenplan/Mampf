@@ -1,10 +1,12 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { extractRecipeImageUrl } from "../_shared/recipe-image-metadata.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const appOrigin = Deno.env.get("APP_ORIGIN");
-const maxPageBytes = 512 * 1024;
+const maxHeadBytes = 2 * 1024 * 1024;
 const maxRedirects = 3;
+const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 if (!supabaseUrl || !serviceRoleKey || !appOrigin) {
   throw new Error("SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and APP_ORIGIN are required.");
@@ -127,92 +129,33 @@ async function validatePublicUrl(rawUrl: string): Promise<URL> {
   return url;
 }
 
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
-}
-
-function attributes(tag: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  const pattern = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
-  for (const match of tag.matchAll(pattern)) {
-    result[match[1].toLowerCase()] = decodeHtmlEntities(match[2] ?? match[3] ?? match[4] ?? "");
-  }
-  return result;
-}
-
-function extractImageUrl(html: string, pageUrl: URL): string | null {
-  const candidates: string[] = [];
-  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
-    const tag = attributes(match[0]);
-    const property = (tag.property ?? tag.name ?? "").toLowerCase();
-    if (["og:image", "og:image:url", "og:image:secure_url", "twitter:image", "twitter:image:src"].includes(property)) {
-      if (tag.content) candidates.push(tag.content);
-    }
-  }
-  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
-    const tag = attributes(match[0]);
-    if (tag.rel?.toLowerCase().split(/\s+/).includes("image_src") && tag.href) {
-      candidates.push(tag.href);
-    }
-  }
-  for (const match of html.matchAll(/<img\b[^>]*>/gi)) {
-    const tag = attributes(match[0]);
-    const source = tag.src ?? tag["data-src"];
-    if (source) candidates.push(source);
-  }
-
-  for (const candidate of candidates) {
-    try {
-      const imageUrl = new URL(candidate, pageUrl);
-      if (
-        ["http:", "https:"].includes(imageUrl.protocol) &&
-        !(appUrl.protocol === "https:" && imageUrl.protocol !== "https:") &&
-        !imageUrl.username &&
-        !imageUrl.password
-      ) {
-        return imageUrl.toString();
-      }
-    } catch {
-      // Ignore malformed page metadata and continue with the next candidate.
-    }
-  }
-  return null;
-}
-
 async function readHtml(response: Response): Promise<string> {
-  const contentLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > maxPageBytes) {
-    await response.body?.cancel();
-    throw new PreviewError("Die Rezeptseite ist zu groß, um ein Titelbild auszulesen.", 413);
-  }
   if (!response.body) return "";
 
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  const decoder = new TextDecoder();
+  let html = "";
   let total = 0;
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) return html + decoder.decode();
     total += value.byteLength;
-    if (total > maxPageBytes) {
+    html += decoder.decode(value, { stream: true });
+    const headEnd = /<\/head\s*>/i.exec(html);
+    if (headEnd) {
       await reader.cancel();
-      throw new PreviewError("Die Rezeptseite ist zu groß, um ein Titelbild auszulesen.", 413);
+      return html.slice(0, headEnd.index + headEnd[0].length);
     }
-    chunks.push(value);
+    if (total > maxHeadBytes) {
+      await reader.cancel();
+      throw new PreviewError("Der HTML-Kopf der Rezeptseite ist zu groß, um ein Titelbild auszulesen.", 413);
+    }
   }
+}
 
-  const html = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    html.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(html);
+function isInstagramPage(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase();
+  return hostname === "instagram.com" || hostname.endsWith(".instagram.com");
 }
 
 async function resolveImage(rawUrl: string): Promise<string | null> {
@@ -226,7 +169,8 @@ async function resolveImage(rawUrl: string): Promise<string | null> {
         redirect: "manual",
         headers: {
           Accept: "text/html,application/xhtml+xml,image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.9",
-          "User-Agent": "MampfRecipePreview/1.0",
+          "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+          "User-Agent": browserUserAgent,
         },
         signal: controller.signal,
       });
@@ -243,6 +187,9 @@ async function resolveImage(rawUrl: string): Promise<string | null> {
 
       if (!response.ok) {
         await response.body?.cancel();
+        if (isInstagramPage(pageUrl) && [401, 403, 429].includes(response.status)) {
+          throw new PreviewError("Instagram blockiert den öffentlichen Bildabruf für diesen Beitrag. Lade das Titelbild bitte direkt hoch.", 422);
+        }
         throw new PreviewError("Die Rezeptseite konnte nicht geladen werden.", 422);
       }
 
@@ -258,8 +205,13 @@ async function resolveImage(rawUrl: string): Promise<string | null> {
       }
 
       const html = await readHtml(response);
-      const imageUrl = extractImageUrl(html, pageUrl);
-      if (!imageUrl) return null;
+      const imageUrl = extractRecipeImageUrl(html, pageUrl);
+      if (!imageUrl) {
+        if (isInstagramPage(pageUrl)) {
+          throw new PreviewError("Instagram stellt für diesen Beitrag keine öffentliche Bildvorschau bereit. Lade das Titelbild bitte direkt hoch.", 422);
+        }
+        return null;
+      }
       const validatedImageUrl = await validatePublicUrl(imageUrl);
       if (appUrl.protocol === "https:" && validatedImageUrl.protocol !== "https:") return null;
       return validatedImageUrl.toString();
