@@ -12,6 +12,7 @@ import {
   Clock3,
   Home,
   LogOut,
+  Package,
   Plus,
   Search,
   Settings2,
@@ -21,6 +22,7 @@ import {
   Utensils,
 } from "lucide-react";
 import CookingMode from "./features/recipes/CookingMode";
+import PantryPage, { type PantryItemSaveInput } from "./features/pantry/PantryPage";
 import RecipeDetail from "./features/recipes/RecipeDetail";
 import RecipeArtwork from "./features/recipes/RecipeArtwork";
 import RecipeEditor, { type RecipePayload } from "./features/recipes/RecipeEditor";
@@ -28,14 +30,18 @@ import { addDays, formatDateKey, formatQuantity, localDateKey, mondayOf } from "
 import { chooseRecipesForWeek, type PlannedDay, type RecipeUsage } from "./lib/meal-planning";
 import { serializeMealPlan } from "./lib/meal-plan-payload";
 import { averageRating } from "./lib/ratings";
+import { comparePantryAvailability } from "./lib/pantry-matching";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import type { AppView, Household, HouseholdRole, MealPlan, Recipe, ShoppingItem } from "./types";
+import type { AppView, Household, HouseholdRole, MealPlan, PantryItem, Recipe, ShoppingItem } from "./types";
+
+const PANTRY_IMAGE_BUCKET = "pantry-images";
 
 const viewLabels: Record<AppView, string> = {
   home: "Heute",
   plan: "Wochenplan",
   recipes: "Rezepte",
   shopping: "Einkaufsliste",
+  pantry: "Vorräte",
 };
 
 function errorText(error: unknown): string {
@@ -62,6 +68,20 @@ function weekDates(weekStart: string): PlannedDay[] {
     date: addDays(weekStart, index),
     excluded: false,
   }));
+}
+
+function pantrySummary(item: ShoppingItem, pantryItems: PantryItem[]): string | null {
+  const availability = comparePantryAvailability(item, pantryItems);
+  if (!availability.hasNameMatch) return null;
+  if (!availability.hasCompatibleUnit) return "Vorrat vorhanden · Einheit prüfen";
+  if (!availability.availableQuantity) return null;
+  const inStock = formatQuantity(availability.availableQuantity, item.unit);
+  if (availability.amountToBuy === null) return `Im Vorrat: ${inStock}`;
+  if (availability.fullyAvailable) return `Vorrat reicht · ${inStock} vorhanden`;
+  if (availability.availableQuantity > 0) {
+    return `Vorrat: ${inStock} · noch ${formatQuantity(availability.amountToBuy, item.unit)} kaufen`;
+  }
+  return null;
 }
 
 function localName(email: string | undefined, username?: unknown): string {
@@ -522,6 +542,7 @@ export default function App() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [plan, setPlan] = useState<MealPlan | null>(null);
   const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
+  const [pantryItems, setPantryItems] = useState<PantryItem[]>([]);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
   const [view, setView] = useState<AppView>("home");
   const [busy, setBusy] = useState(false);
@@ -561,6 +582,7 @@ export default function App() {
   useEffect(() => {
     if (!client || !session) {
       setHousehold(null);
+      setPantryItems([]);
       setWorkspaceReady(Boolean(session === null && authReady));
       setPendingInviteToken(null);
       setInviteRequiresPassword(false);
@@ -593,6 +615,7 @@ export default function App() {
       if (membershipError) throw membershipError;
       if (!data) {
         setHousehold(null);
+        setPantryItems([]);
         setWorkspaceReady(true);
         return;
       }
@@ -656,7 +679,24 @@ export default function App() {
       if (membersError) throw membersError;
       if (active) setMemberCount(data?.length ?? 0);
     }
-    Promise.all([loadRecipes(), loadMembers()])
+    async function loadPantry() {
+      const { data, error: pantryError } = await client!
+        .from("pantry_items")
+        .select("id, household_id, name, barcode, quantity, unit, image_path, created_at, updated_at")
+        .eq("household_id", household!.id)
+        .order("name");
+      if (pantryError) throw pantryError;
+      const rows = (data ?? []) as unknown as Array<Omit<PantryItem, "image_url">>;
+      const items = await Promise.all(rows.map(async (item): Promise<PantryItem> => {
+        if (!item.image_path) return { ...item, image_url: null };
+        const { data: signedImage, error: imageError } = await client!
+          .storage.from(PANTRY_IMAGE_BUCKET).createSignedUrl(item.image_path, 60 * 60);
+        if (imageError) throw imageError;
+        return { ...item, image_url: signedImage.signedUrl };
+      }));
+      if (active) setPantryItems(items);
+    }
+    Promise.all([loadRecipes(), loadMembers(), loadPantry()])
       .catch((reason: unknown) => { if (active) setError(errorText(reason)); })
       .finally(() => { if (active) setLoadingData(false); });
     return () => { active = false; };
@@ -904,6 +944,128 @@ export default function App() {
     });
   }
 
+  async function savePantryItem(input: PantryItemSaveInput) {
+    if (!client || !household) throw new Error("Haushalt nicht verfügbar.");
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const existing = input.id ? pantryItems.find((item) => item.id === input.id) : undefined;
+    let imagePath = input.removeImage ? null : existing?.image_path ?? null;
+    let uploadedPath: string | null = null;
+    try {
+      if (input.imageFile) {
+        const extensionByType: Record<string, string> = {
+          "image/jpeg": "jpg",
+          "image/png": "png",
+          "image/webp": "webp",
+          "image/gif": "gif",
+        };
+        const extension = extensionByType[input.imageFile.type];
+        if (!extension || input.imageFile.size > 8 * 1024 * 1024) {
+          throw new Error("Bitte wähle ein JPEG-, PNG-, WebP- oder GIF-Bild mit höchstens 8 MB aus.");
+        }
+        uploadedPath = `${household.id}/${crypto.randomUUID()}.${extension}`;
+        const { error: uploadError } = await client.storage
+          .from(PANTRY_IMAGE_BUCKET)
+          .upload(uploadedPath, input.imageFile, {
+            cacheControl: "3600",
+            contentType: input.imageFile.type,
+            upsert: false,
+          });
+        if (uploadError) throw uploadError;
+        imagePath = uploadedPath;
+      }
+
+      const record = {
+        household_id: household.id,
+        name: input.name,
+        barcode: input.barcode,
+        quantity: input.quantity,
+        unit: input.unit,
+        image_path: imagePath,
+      };
+      if (input.id) {
+        const { error: updateError } = await client
+          .from("pantry_items")
+          .update({ ...record, updated_at: new Date().toISOString() })
+          .eq("id", input.id)
+          .eq("household_id", household.id)
+          .select("id")
+          .single();
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await client
+          .from("pantry_items")
+          .insert(record)
+          .select("id")
+          .single();
+        if (insertError) throw insertError;
+      }
+    } catch (reason) {
+      if (uploadedPath) {
+        let cleanupError: unknown;
+        try {
+          const result = await client.storage.from(PANTRY_IMAGE_BUCKET).remove([uploadedPath]);
+          cleanupError = result.error;
+        } catch (error) {
+          cleanupError = error;
+        }
+        if (cleanupError) {
+          const combinedError = new Error(`${errorText(reason)} Das nicht gespeicherte Bild konnte zudem nicht entfernt werden: ${errorText(cleanupError)}`);
+          setError(errorText(combinedError));
+          throw combinedError;
+        }
+      }
+      setError(errorText(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+
+    setWorkspaceRevision((revision) => revision + 1);
+    setNotice(input.id ? "Der Vorrat wurde aktualisiert." : "Der Vorrat wurde hinzugefügt.");
+    if (existing?.image_path && existing.image_path !== imagePath) {
+      try {
+        const { error: cleanupError } = await client.storage.from(PANTRY_IMAGE_BUCKET).remove([existing.image_path]);
+        if (cleanupError) throw cleanupError;
+      } catch (reason) {
+        setError(`Der Vorrat wurde gespeichert, aber das alte Produktbild konnte nicht entfernt werden: ${errorText(reason)}`);
+      }
+    }
+  }
+
+  async function deletePantryItem(item: PantryItem) {
+    if (!client || !household) throw new Error("Haushalt nicht verfügbar.");
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error: deleteError } = await client
+        .from("pantry_items")
+        .delete()
+        .eq("id", item.id)
+        .eq("household_id", household.id)
+        .select("id")
+        .single();
+      if (deleteError) throw deleteError;
+    } catch (reason) {
+      setError(errorText(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+    setWorkspaceRevision((revision) => revision + 1);
+    setNotice("Der Vorrat wurde entfernt.");
+    if (item.image_path) {
+      try {
+        const { error: cleanupError } = await client.storage.from(PANTRY_IMAGE_BUCKET).remove([item.image_path]);
+        if (cleanupError) throw cleanupError;
+      } catch (reason) {
+        setError(`Der Vorrat wurde entfernt, aber das Produktbild konnte nicht gelöscht werden: ${errorText(reason)}`);
+      }
+    }
+  }
+
   async function rateRecipe(recipeId: string, rating: number) {
     await runAction(async () => {
       if (!client || !session) throw new Error("Du musst angemeldet sein, um ein Rezept zu bewerten.");
@@ -1114,6 +1276,7 @@ export default function App() {
     { id: "plan", icon: CalendarDays },
     { id: "recipes", icon: Utensils },
     { id: "shopping", icon: ShoppingBasket },
+    { id: "pantry", icon: Package },
   ];
   const todayLabel = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
   const completedItems = shoppingItems.filter((item) => item.checked).length;
@@ -1253,15 +1416,21 @@ export default function App() {
                     <div className="shopping-progress"><span style={{ width: `${(completedItems / shoppingItems.length) * 100}%` }} /></div>
                     <div className="shopping-progress-caption"><span>{completedItems} von {shoppingItems.length} erledigt</span><ShoppingBasket size={15} /></div>
                     <ul className="shopping-preview-list">
-                      {shoppingItems.slice(0, 5).map((item) => (
-                        <li key={item.id} className={item.checked ? "checked" : ""}>
-                          <button aria-label={`${item.checked ? "Abhaken rückgängig" : "Abhaken"}: ${item.name}`} onClick={() => void toggleShoppingItem(item)}>
-                            {item.checked && <Check size={12} />}
-                          </button>
-                          <span>{item.name}</span>
-                          <small>{formatQuantity(item.quantity, item.unit)}</small>
-                        </li>
-                      ))}
+                      {shoppingItems.slice(0, 5).map((item) => {
+                        const summary = pantrySummary(item, pantryItems);
+                        return (
+                          <li key={item.id} className={item.checked ? "checked" : ""}>
+                            <button aria-label={`${item.checked ? "Abhaken rückgängig" : "Abhaken"}: ${item.name}`} onClick={() => void toggleShoppingItem(item)}>
+                              {item.checked && <Check size={12} />}
+                            </button>
+                            <span className="shopping-preview-copy">
+                              <span>{item.name}</span>
+                              {summary && <small className="pantry-stock-note">{summary}</small>}
+                            </span>
+                            <small>{formatQuantity(item.quantity, item.unit)}</small>
+                          </li>
+                        );
+                      })}
                     </ul>
                     <button className="text-button shopping-open-link" onClick={() => setView("shopping")}>Liste öffnen <ArrowRight size={15} /></button>
                   </>
@@ -1429,20 +1598,27 @@ export default function App() {
                   <div className="shopping-list-card-head"><div><span className="shopping-bag-icon">🛍️</span><div><h2>Diese Woche</h2><p>{formatDateKey(weekStart, { day: "numeric", month: "long" })} – {formatDateKey(addDays(weekStart, 6), { day: "numeric", month: "long" })}</p></div></div><span className="shopping-counter">{shoppingItems.length - completedItems} offen</span></div>
                   <div className="shopping-big-progress"><span style={{ width: `${(completedItems / shoppingItems.length) * 100}%` }} /></div>
                   <ul className="shopping-full-list">
-                    {shoppingItems.map((item) => (
-                      <li key={item.id} className={item.checked ? "checked" : ""}>
-                        <button className="shopping-checkbox" onClick={() => void toggleShoppingItem(item)} aria-label={`${item.checked ? "Wieder öffnen" : "Als erledigt markieren"}: ${item.name}`}>
-                          {item.checked && <Check size={14} />}
-                        </button>
-                        <span className="shopping-item-name">{item.name}</span>
-                        <span className="shopping-item-amount">{formatQuantity(item.quantity, item.unit)}</span>
-                      </li>
-                    ))}
+                    {shoppingItems.map((item) => {
+                      const summary = pantrySummary(item, pantryItems);
+                      return (
+                        <li key={item.id} className={item.checked ? "checked" : ""}>
+                          <button className="shopping-checkbox" onClick={() => void toggleShoppingItem(item)} aria-label={`${item.checked ? "Wieder öffnen" : "Als erledigt markieren"}: ${item.name}`}>
+                            {item.checked && <Check size={14} />}
+                          </button>
+                          <span className="shopping-item-copy">
+                            <span className="shopping-item-name">{item.name}</span>
+                            {summary && <small className="pantry-stock-note">{summary}</small>}
+                          </span>
+                          <span className="shopping-item-amount">{formatQuantity(item.quantity, item.unit)}</span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
                 <aside className="shopping-side">
                   <div className="shopping-illustration-card"><div className="market-bag">🧺</div><span>frisch geplant</span><i>✳</i></div>
-                  <div className="shopping-hint"><Sparkles size={18} /><p>Doppelte Zutaten sind schon zusammengerechnet. Ein Häkchen genügt, wenn etwas im Korb liegt.</p></div>
+                  <div className="shopping-hint"><Sparkles size={18} /><p>Doppelte Zutaten sind zusammengerechnet. Mampf zeigt Vorrat und Restbedarf; Bestände werden nicht automatisch verändert.</p></div>
+                  <button className="button button-outline full-width" onClick={() => setView("pantry")}><Package size={16} /> Vorräte verwalten</button>
                   <button className="button button-outline full-width" onClick={() => setView("plan")}><CalendarDays size={16} /> Zum Wochenplan</button>
                 </aside>
               </div>
@@ -1454,6 +1630,15 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {view === "pantry" && (
+          <PantryPage
+            items={pantryItems}
+            busy={busy}
+            onSave={savePantryItem}
+            onDelete={deletePantryItem}
+          />
         )}
       </main>
 

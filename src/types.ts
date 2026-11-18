@@ -1,5 +1,5 @@
 export type HouseholdRole = "owner" | "member";
-export type AppView = "home" | "plan" | "recipes" | "shopping";
+export type AppView = "home" | "plan" | "recipes" | "shopping" | "pantry";
 
 export interface Household {
   id: string;
@@ -59,4 +59,17 @@ export interface ShoppingItem {
   unit: string;
   checked: boolean;
   sort_order: number;
+}
+
+export interface PantryItem {
+  id: string;
+  household_id: string;
+  name: string;
+  barcode: string;
+  quantity: number;
+  unit: string;
+  image_path: string | null;
+  image_url: string | null;
+  created_at: string;
+  updated_at: string;
 }

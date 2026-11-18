@@ -219,6 +219,8 @@ p { color: var(--muted); line-height: 1.6; }
 .shopping-preview-list li.checked > button { border-color: var(--green); background: var(--green); }
 .shopping-preview-list li > span { flex: 1; }
 .shopping-preview-list li > small { color: #96998f; font-size: 0.7rem; }
+.shopping-preview-copy, .shopping-item-copy { display: grid; min-width: 0; gap: 3px; }
+.pantry-stock-note { color: #5f7956; font-size: 0.67rem; font-weight: 600; line-height: 1.35; }
 .shopping-preview-list li.checked > span { color: #a6a99f; text-decoration: line-through; }
 .shopping-open-link { margin-top: 13px; padding: 0; }
 .shopping-empty { display: grid; min-height: 155px; align-content: center; justify-items: center; text-align: center; }
@@ -327,7 +329,8 @@ p { color: var(--muted); line-height: 1.6; }
 .shopping-full-list li:last-child { border-bottom: 0; }
 .shopping-checkbox { display: grid; width: 21px; height: 21px; flex: 0 0 auto; place-items: center; border: 1.5px solid #d4d9ce; border-radius: 7px; background: transparent; color: #fff; }
 .shopping-full-list li.checked .shopping-checkbox { border-color: var(--green); background: var(--green); }
-.shopping-item-name { flex: 1; color: #485243; font-size: 0.88rem; }
+.shopping-item-copy { flex: 1; }
+.shopping-item-name { overflow: hidden; color: #485243; font-size: 0.88rem; text-overflow: ellipsis; white-space: nowrap; }
 .shopping-item-amount { color: #83897b; font-size: 0.8rem; font-weight: 600; }
 .shopping-full-list li.checked .shopping-item-name { color: #a6aa9e; text-decoration: line-through; }
 .shopping-side { display: grid; gap: 14px; }
@@ -339,6 +342,56 @@ p { color: var(--muted); line-height: 1.6; }
 .shopping-hint { display: flex; gap: 10px; border: 1px solid #ece8dc; border-radius: 15px; padding: 14px; background: #f4f0e5; color: #9f865b; }
 .shopping-hint p { margin: 0; color: #827c6b; font-size: 0.76rem; line-height: 1.55; }
 .shopping-empty-page { margin-top: 12px; }
+
+.pantry-page-actions { flex-wrap: wrap; }
+.pantry-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin: 25px 0 17px; color: #899083; font-size: 0.76rem; }
+.pantry-toolbar .search-field { width: min(440px, 100%); }
+.pantry-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.pantry-card { overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); box-shadow: 0 7px 22px rgba(52, 60, 44, 0.035); }
+.pantry-card-image { position: relative; display: grid; height: 175px; place-items: center; overflow: hidden; background: #eff0e8; }
+.pantry-card-image > img { width: 100%; height: 100%; object-fit: cover; }
+.pantry-image-placeholder { display: grid; justify-items: center; gap: 8px; color: #98a08f; font-size: 0.72rem; }
+.pantry-quantity { position: absolute; right: 11px; bottom: 11px; border: 1px solid rgba(255,255,255,.7); border-radius: 99px; padding: 6px 10px; background: rgba(255,254,250,.94); color: #4e6148; font-size: 0.76rem; font-weight: 700; box-shadow: 0 2px 8px rgba(20,30,20,.08); }
+.pantry-card-content { display: flex; min-height: 78px; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 13px; }
+.pantry-card-content h2 { overflow: hidden; margin: 0; color: #43503f; font-size: 1rem; text-overflow: ellipsis; white-space: nowrap; }
+.pantry-barcode { display: flex; align-items: center; gap: 5px; margin: 6px 0 0; color: #92988c; font-size: 0.68rem; }
+.pantry-card-actions { display: flex; flex: 0 0 auto; gap: 3px; }
+.pantry-card-actions .icon-button { width: 36px; height: 36px; }
+.pantry-remove-button { color: #a45b48; }
+.pantry-page-error { margin: -5px 0 12px; }
+.pantry-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; }
+.pantry-form, .pantry-scanner { width: min(560px, 100%); max-height: min(90vh, 850px); overflow: auto; padding: 25px; }
+.pantry-form .pantry-modal-heading { margin-bottom: 20px; }
+.pantry-modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pantry-modal-heading h2 { margin: 0; font-size: 1.6rem; }
+.pantry-quantity-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.pantry-form .field-label select { width: 100%; min-height: 42px; border: 1px solid #e5e4dc; border-radius: 9px; padding: 10px 11px; background: #fffefa; color: #3f4a3b; font-size: 0.84rem; }
+.pantry-barcode-input { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 7px; }
+.pantry-barcode-input .button { min-height: 42px; padding: 0; }
+.pantry-form form > .field-label { margin-bottom: 14px; }
+.pantry-photo-row { display: flex; align-items: center; gap: 13px; margin-top: 18px; }
+.pantry-photo-preview { width: 92px; height: 92px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 14px; object-fit: cover; }
+.pantry-photo-controls { display: grid; justify-items: start; gap: 7px; }
+.pantry-photo-button { position: relative; overflow: hidden; }
+.pantry-photo-button input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.pantry-photo-controls small { color: #909689; font-size: 0.68rem; }
+.pantry-remove-photo { padding: 0; color: #a45b48; font-size: 0.72rem; }
+.pantry-form .form-actions { margin-top: 20px; }
+.pantry-inline-note { margin: -7px 0 14px; border-radius: 9px; padding: 9px 11px; background: #f1f3eb; color: #62735a; font-size: 0.74rem; }
+.pantry-scanner-backdrop { z-index: 60; }
+.pantry-scanner { width: min(540px, 100%); }
+.pantry-scanner-title { display: flex; align-items: center; gap: 11px; }
+.pantry-scanner-title h2 { font-size: 1.45rem; }
+.pantry-scanner-title .eyebrow { margin-bottom: 3px; }
+.pantry-scanner-icon { display: grid; width: 43px; height: 43px; place-items: center; border-radius: 13px; background: #e9eee4; color: var(--green); }
+.barcode-camera { position: relative; display: grid; aspect-ratio: 4 / 3; place-items: center; overflow: hidden; margin-top: 17px; border-radius: 15px; background: #26332c; }
+.barcode-camera video { width: 100%; height: 100%; object-fit: cover; }
+.barcode-camera-idle video { opacity: 0; }
+.barcode-camera > div { position: absolute; display: grid; justify-items: center; gap: 8px; color: #e8eee5; font-size: 0.78rem; }
+.barcode-scan-guide { position: absolute; top: 40%; right: 12%; left: 12%; height: 20%; border: 2px solid rgba(255,255,255,.82); border-radius: 9px; box-shadow: 0 0 0 999px rgba(0,0,0,.1); pointer-events: none; }
+.pantry-scan-message { margin: 12px 0 0; color: #7e8678; font-size: 0.75rem; }
+.pantry-barcode-form { display: grid; gap: 13px; margin-top: 15px; }
+.pantry-barcode-form .button { justify-content: center; }
 
 .app-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid #e7e5dc; padding: 20px clamp(22px, 5vw, 76px); color: #a1a398; font-size: 0.72rem; }
 .app-footer span:first-child { color: #68765f; font-family: var(--serif); font-size: 1.1rem; font-weight: 700; letter-spacing: -0.06em; }
@@ -616,6 +669,24 @@ p { color: var(--muted); line-height: 1.6; }
   .shopping-item-name { font-size: 0.82rem; }
   .shopping-item-amount { font-size: 0.72rem; }
   .shopping-full-list .shopping-checkbox { width: 40px; height: 40px; }
+  .pantry-page-actions { width: 100%; }
+  .pantry-page-actions .button { min-height: 44px; flex: 1; justify-content: center; padding: 0 10px; font-size: 0.76rem; }
+  .pantry-grid { grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 10px; }
+  .pantry-card-image { height: 135px; }
+  .pantry-card-content { min-height: 69px; padding: 9px; }
+  .pantry-card-content h2 { font-size: 0.86rem; }
+  .pantry-card-actions .icon-button { width: 34px; height: 34px; }
+  .pantry-toolbar { align-items: flex-start; flex-direction: column; }
+  .pantry-toolbar .search-field { width: 100%; }
+  .pantry-form, .pantry-scanner { max-height: calc(92dvh - env(safe-area-inset-top)); padding: 21px 16px calc(17px + env(safe-area-inset-bottom)); border-radius: 20px 20px 14px 14px; }
+  .pantry-quantity-row { gap: 8px; }
+  .pantry-form .field-label input, .pantry-form .field-label select { min-height: 44px; font-size: 16px; }
+  .pantry-photo-row { align-items: flex-start; }
+  .pantry-photo-preview { width: 78px; height: 78px; }
+  .pantry-form .form-actions { flex-wrap: wrap; }
+  .pantry-form .form-actions .button { min-height: 44px; flex: 1; padding: 0 10px; font-size: 0.76rem; }
+  .barcode-camera { aspect-ratio: 3 / 4; }
+  .pantry-barcode-form .button { min-height: 46px; }
   .round-arrow { width: 40px; height: 40px; }
   .app-footer { flex-wrap: wrap; gap: 8px 15px; margin-bottom: calc(62px + env(safe-area-inset-bottom)); padding: 16px; }
   .app-footer span:nth-child(2) { order: 3; width: 100%; }

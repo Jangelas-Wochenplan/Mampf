@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { commonIngredientUnits, ingredientUnitGroups } from "../../lib/ingredient-units";
 import type { Recipe } from "../../types";
 
 interface IngredientDraft {
@@ -28,56 +29,6 @@ interface RecipeEditorProps {
   onDelete?: () => Promise<void>;
 }
 
-const unitGroups = [
-  {
-    label: "Gewicht",
-    units: [
-      { value: "g", label: "Gramm (g)" },
-      { value: "kg", label: "Kilogramm (kg)" },
-    ],
-  },
-  {
-    label: "Volumen",
-    units: [
-      { value: "ml", label: "Milliliter (ml)" },
-      { value: "l", label: "Liter (l)" },
-    ],
-  },
-  {
-    label: "Kochmaße",
-    units: [
-      { value: "TL", label: "Teelöffel (TL)" },
-      { value: "EL", label: "Esslöffel (EL)" },
-      { value: "Tasse", label: "Tasse" },
-      { value: "Prise", label: "Prise" },
-      { value: "Spritzer", label: "Spritzer" },
-      { value: "Handvoll", label: "Handvoll" },
-    ],
-  },
-  {
-    label: "Stück und Packungen",
-    units: [
-      { value: "Stück", label: "Stück" },
-      { value: "Bund", label: "Bund" },
-      { value: "Zehe", label: "Zehe" },
-      { value: "Dose", label: "Dose" },
-      { value: "Packung", label: "Packung" },
-      { value: "Päckchen", label: "Päckchen" },
-      { value: "Scheibe", label: "Scheibe" },
-      { value: "Blatt", label: "Blatt" },
-      { value: "Stange", label: "Stange" },
-      { value: "Kopf", label: "Kopf" },
-      { value: "Flasche", label: "Flasche" },
-      { value: "Glas", label: "Glas" },
-      { value: "Becher", label: "Becher" },
-      { value: "Zweig", label: "Zweig" },
-      { value: "Portion", label: "Portion" },
-    ],
-  },
-];
-
-const commonUnits = new Set(unitGroups.flatMap((group) => group.units.map((unit) => unit.value)));
-
 function UnitSelect({
   label,
   value,
@@ -92,14 +43,14 @@ function UnitSelect({
   return (
     <select className={className} aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">Einheit wählen</option>
-      {unitGroups.map((group) => (
+      {ingredientUnitGroups.map((group) => (
         <optgroup key={group.label} label={group.label}>
           {group.units.map((unit) => (
             <option key={unit.value} value={unit.value}>{unit.label}</option>
           ))}
         </optgroup>
       ))}
-      {value && !commonUnits.has(value) && (
+      {value && !commonIngredientUnits.has(value) && (
         <optgroup label="Bisherige Einheit">
           <option value={value}>{value}</option>
         </optgroup>
