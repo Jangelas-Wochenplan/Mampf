@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import {
   ArrowDownRight,
   ArrowRight,
+  Archive,
   CalendarDays,
   Check,
   ChevronDown,
@@ -35,9 +36,11 @@ import { serializeMealPlan } from "./lib/meal-plan-payload";
 import { averageRating } from "./lib/ratings";
 import { comparePantryAvailability } from "./lib/pantry-matching";
 import { pantryErrorMessage } from "./lib/pantry-errors";
+import { pantryImageFormat } from "./lib/pantry-images";
+import { isShoppingListComplete } from "./lib/shopping-archive";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { readSavedDarkMode, saveDarkMode, UI_THEME } from "./lib/ui-themes";
-import type { AppView, Household, HouseholdRole, MealPlan, PantryItem, Recipe, ShoppingItem } from "./types";
+import type { AppView, ArchivedShoppingList, Household, HouseholdRole, MealPlan, PantryItem, Recipe, ShoppingItem } from "./types";
 
 const PANTRY_IMAGE_BUCKET = "pantry-images";
 
@@ -547,6 +550,8 @@ export default function App() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [plan, setPlan] = useState<MealPlan | null>(null);
   const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
+  const [archivedShoppingLists, setArchivedShoppingLists] = useState<ArchivedShoppingList[]>([]);
+  const [newShoppingItem, setNewShoppingItem] = useState("");
   const [pantryItems, setPantryItems] = useState<PantryItem[]>([]);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
   const [view, setView] = useState<AppView>("home");
@@ -610,6 +615,7 @@ export default function App() {
     if (!client || !session) {
       setHousehold(null);
       setPantryItems([]);
+      setArchivedShoppingLists([]);
       setWorkspaceReady(Boolean(session === null && authReady));
       setPendingInviteToken(null);
       setInviteRequiresPassword(false);
@@ -727,7 +733,20 @@ export default function App() {
         if (active) setError(pantryErrorMessage(reason));
       }
     }
-    Promise.all([loadRecipes(), loadMembers(), loadPantry()])
+    async function loadShoppingArchive() {
+      const { data, error: archiveError } = await client!
+        .from("meal_plans")
+        .select("id, start_date, shopping_archived_at, shopping_items:shopping_list_items(id, plan_id, name, quantity, unit, checked, sort_order, is_custom)")
+        .eq("household_id", household!.id)
+        .not("shopping_archived_at", "is", null)
+        .order("shopping_archived_at", { ascending: false })
+        .limit(50);
+      if (archiveError) throw archiveError;
+      if (active) {
+        setArchivedShoppingLists((data ?? []) as unknown as ArchivedShoppingList[]);
+      }
+    }
+    Promise.all([loadRecipes(), loadMembers(), loadPantry(), loadShoppingArchive()])
       .catch((reason: unknown) => { if (active) setError(errorText(reason)); })
       .finally(() => { if (active) setLoadingData(false); });
     return () => { active = false; };
@@ -739,7 +758,7 @@ export default function App() {
     async function loadPlan() {
       const { data, error: planError } = await client!
         .from("meal_plans")
-        .select("id, household_id, start_date, plan_days:meal_plan_days(id, plan_id, day_date, excluded, recipe_id, recipe:recipes(id, title, description, prep_minutes, emoji)), shopping_items:shopping_list_items(id, plan_id, name, quantity, unit, checked)")
+        .select("id, household_id, start_date, shopping_archived_at, plan_days:meal_plan_days(id, plan_id, day_date, excluded, recipe_id, recipe:recipes(id, title, description, prep_minutes, emoji)), shopping_items:shopping_list_items(id, plan_id, name, quantity, unit, checked, sort_order, is_custom)")
         .eq("household_id", household!.id)
         .eq("start_date", weekStart)
         .maybeSingle();
@@ -985,22 +1004,16 @@ export default function App() {
     let uploadedPath: string | null = null;
     try {
       if (input.imageFile) {
-        const extensionByType: Record<string, string> = {
-          "image/jpeg": "jpg",
-          "image/png": "png",
-          "image/webp": "webp",
-          "image/gif": "gif",
-        };
-        const extension = extensionByType[input.imageFile.type];
-        if (!extension || input.imageFile.size > 8 * 1024 * 1024) {
+        const format = pantryImageFormat(input.imageFile);
+        if (!format || input.imageFile.size > 8 * 1024 * 1024) {
           throw new Error("Bitte wähle ein JPEG-, PNG-, WebP- oder GIF-Bild mit höchstens 8 MB aus.");
         }
-        uploadedPath = `${household.id}/${crypto.randomUUID()}.${extension}`;
+        uploadedPath = `${household.id}/${crypto.randomUUID()}.${format.extension}`;
         const { error: uploadError } = await client.storage
           .from(PANTRY_IMAGE_BUCKET)
           .upload(uploadedPath, input.imageFile, {
             cacheControl: "3600",
-            contentType: input.imageFile.type,
+            contentType: format.contentType,
             upsert: false,
           });
         if (uploadError) throw uploadError;
@@ -1262,7 +1275,57 @@ export default function App() {
       setError(errorText(updateError));
       return;
     }
-    setShoppingItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, checked: !item.checked } : entry));
+    const updatedItems = shoppingItems.map((entry) => entry.id === item.id
+      ? { ...entry, checked: !item.checked }
+      : entry);
+    setShoppingItems(updatedItems);
+    if (plan?.id !== item.plan_id) return;
+
+    const allCompleted = isShoppingListComplete(updatedItems);
+    const archivedAt = allCompleted ? plan.shopping_archived_at ?? new Date().toISOString() : null;
+    setPlan({ ...plan, shopping_archived_at: archivedAt });
+    setArchivedShoppingLists((current) => {
+      const remaining = current.filter((entry) => entry.id !== plan.id);
+      return archivedAt
+        ? [{ ...plan, shopping_archived_at: archivedAt, shopping_items: updatedItems }, ...remaining]
+        : remaining;
+    });
+  }
+
+  async function addManualShoppingItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = newShoppingItem.trim();
+    if (!name) return;
+    await runAction(async () => {
+      if (!client || !household || !session) throw new Error("Haushalt nicht verfügbar.");
+      let planId = plan?.id;
+      if (!planId) {
+        const { data, error: planError } = await client
+          .from("meal_plans")
+          .upsert(
+            { household_id: household.id, start_date: weekStart, created_by: session.user.id },
+            { onConflict: "household_id,start_date" },
+          )
+          .select("id")
+          .single();
+        if (planError) throw planError;
+        planId = data.id;
+      }
+      const sortOrder = Math.max(-1, ...shoppingItems.map((item) => item.sort_order)) + 1;
+      const { error: insertError } = await client.from("shopping_list_items").insert({
+        plan_id: planId,
+        name,
+        quantity: null,
+        unit: "",
+        checked: false,
+        sort_order: sortOrder,
+        is_custom: true,
+      });
+      if (insertError) throw insertError;
+      setNewShoppingItem("");
+      setWorkspaceRevision((revision) => revision + 1);
+      setNotice("Der eigene Eintrag wurde zur Einkaufsliste hinzugefügt.");
+    });
   }
 
   if (!isSupabaseConfigured || !client) {
@@ -1728,42 +1791,83 @@ export default function App() {
               <div><p className="eyebrow">Gut vorbereitet einkaufen</p><h1>Der Einkaufszettel</h1><p>Alles, was ihr für die geplanten Gerichte braucht.</p></div>
               <div className="shopping-total">{completedItems}<span> / {shoppingItems.length} erledigt</span></div>
             </div>
+            <form className="shopping-add-form" onSubmit={(event) => void addManualShoppingItem(event)}>
+              <label className="field-label">
+                Eigener Eintrag
+                <input
+                  value={newShoppingItem}
+                  onChange={(event) => setNewShoppingItem(event.target.value)}
+                  maxLength={120}
+                  placeholder="z. B. Kaffee oder Spülmittel"
+                  required
+                />
+              </label>
+              <button className="button button-primary" type="submit" disabled={busy || !newShoppingItem.trim()}>
+                <Plus size={16} /> Hinzufügen
+              </button>
+            </form>
             {shoppingItems.length > 0 ? (
-              <div className="shopping-layout">
-                <section className="shopping-list-card">
-                  <div className="shopping-list-card-head"><div><span className="shopping-bag-icon">🛍️</span><div><h2>Diese Woche</h2><p>{formatDateKey(weekStart, { day: "numeric", month: "long" })} – {formatDateKey(addDays(weekStart, 6), { day: "numeric", month: "long" })}</p></div></div><span className="shopping-counter">{shoppingItems.length - completedItems} offen</span></div>
-                  <div className="shopping-big-progress"><span style={{ width: `${(completedItems / shoppingItems.length) * 100}%` }} /></div>
-                  <ul className="shopping-full-list">
-                    {shoppingItems.map((item) => {
-                      const summary = pantrySummary(item, pantryItems);
-                      return (
-                        <li key={item.id} className={item.checked ? "checked" : ""}>
-                          <button className="shopping-checkbox" onClick={() => void toggleShoppingItem(item)} aria-label={`${item.checked ? "Wieder öffnen" : "Als erledigt markieren"}: ${item.name}`}>
-                            {item.checked && <Check size={14} />}
-                          </button>
-                          <span className="shopping-item-copy">
-                            <span className="shopping-item-name">{item.name}</span>
-                            {summary && <small className="pantry-stock-note">{summary}</small>}
-                          </span>
-                          <span className="shopping-item-amount">{formatQuantity(item.quantity, item.unit)}</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
+              plan?.shopping_archived_at ? (
+                <section className="shopping-archived-banner">
+                  <Archive size={22} />
+                  <div><h2>Diese Einkaufsliste ist abgeschlossen.</h2><p>Sie wurde automatisch archiviert und bleibt unten im Archiv verfügbar.</p></div>
                 </section>
-                <aside className="shopping-side">
-                  <div className="shopping-illustration-card"><div className="market-bag">🧺</div><span>frisch geplant</span><i>✳</i></div>
-                  <div className="shopping-hint"><Sparkles size={18} /><p>Doppelte Zutaten sind zusammengerechnet. Mampf zeigt Vorrat und Restbedarf; Bestände werden nicht automatisch verändert.</p></div>
-                  <button className="button button-outline full-width" onClick={() => setView("pantry")}><Package size={16} /> Vorräte verwalten</button>
-                  <button className="button button-outline full-width" onClick={() => setView("plan")}><CalendarDays size={16} /> Zum Wochenplan</button>
-                </aside>
-              </div>
+              ) : (
+                <div className="shopping-layout">
+                  <section className="shopping-list-card">
+                    <div className="shopping-list-card-head"><div><span className="shopping-bag-icon">🛍️</span><div><h2>Diese Woche</h2><p>{formatDateKey(weekStart, { day: "numeric", month: "long" })} – {formatDateKey(addDays(weekStart, 6), { day: "numeric", month: "long" })}</p></div></div><span className="shopping-counter">{shoppingItems.length - completedItems} offen</span></div>
+                    <div className="shopping-big-progress"><span style={{ width: `${(completedItems / shoppingItems.length) * 100}%` }} /></div>
+                    <ul className="shopping-full-list">
+                      {shoppingItems.map((item) => {
+                        const summary = pantrySummary(item, pantryItems);
+                        return (
+                          <li key={item.id} className={item.checked ? "checked" : ""}>
+                            <button className="shopping-checkbox" onClick={() => void toggleShoppingItem(item)} aria-label={`${item.checked ? "Wieder öffnen" : "Als erledigt markieren"}: ${item.name}`}>
+                              {item.checked && <Check size={14} />}
+                            </button>
+                            <span className="shopping-item-copy">
+                              <span className="shopping-item-name">{item.name}</span>
+                              {item.is_custom && <small>Eigener Eintrag</small>}
+                              {summary && <small className="pantry-stock-note">{summary}</small>}
+                            </span>
+                            <span className="shopping-item-amount">{formatQuantity(item.quantity, item.unit)}</span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                  <aside className="shopping-side">
+                    <div className="shopping-illustration-card"><div className="market-bag">🧺</div><span>frisch geplant</span><i>✳</i></div>
+                    <div className="shopping-hint"><Sparkles size={18} /><p>Doppelte Zutaten sind zusammengerechnet. Mampf zeigt Vorrat und Restbedarf; Bestände werden nicht automatisch verändert.</p></div>
+                    <button className="button button-outline full-width" onClick={() => setView("pantry")}><Package size={16} /> Vorräte verwalten</button>
+                    <button className="button button-outline full-width" onClick={() => setView("plan")}><CalendarDays size={16} /> Zum Wochenplan</button>
+                  </aside>
+                </div>
+              )
             ) : (
               <div className="empty-recipes shopping-empty-page">
                 <span>🧺</span><h2>Der Einkaufskorb wartet.</h2>
-                <p>Erstellt zuerst einen Wochenplan. Mampf rechnet die Einkaufsliste für euch zusammen.</p>
+                <p>Fügt einen eigenen Eintrag hinzu oder erstellt einen Wochenplan für automatisch zusammengestellte Zutaten.</p>
                 <button className="button button-primary" onClick={() => setView("plan")}>Wochenplan ansehen <ArrowRight size={16} /></button>
               </div>
+            )}
+            {archivedShoppingLists.length > 0 && (
+              <section className="shopping-archive">
+                <h2><Archive size={20} /> Archiv</h2>
+                {archivedShoppingLists.map((archived) => (
+                  <details className="shopping-archive-entry" key={archived.id}>
+                    <summary>
+                      <span>{formatDateKey(archived.start_date, { day: "numeric", month: "long" })} – {formatDateKey(addDays(archived.start_date, 6), { day: "numeric", month: "long", year: "numeric" })}</span>
+                      <small>{archived.shopping_items.length} Einträge</small>
+                    </summary>
+                    <ul className="shopping-archive-items">
+                      {archived.shopping_items.map((item) => (
+                        <li key={item.id}><Check size={14} /><span>{item.name}{item.is_custom && <small>Eigener Eintrag</small>}</span><small>{formatQuantity(item.quantity, item.unit)}</small></li>
+                      ))}
+                    </ul>
+                  </details>
+                ))}
+              </section>
             )}
           </div>
         )}

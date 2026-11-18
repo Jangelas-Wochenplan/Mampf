@@ -27,6 +27,7 @@ function shoppingItem(name: string, quantity: number | null, unit: string): Shop
     unit,
     checked: false,
     sort_order: 0,
+    is_custom: false,
   };
 }
 
