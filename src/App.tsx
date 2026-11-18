@@ -78,7 +78,7 @@ function AuthScreen({ client }: { client: NonNullable<typeof supabase> }) {
     setBusy(true);
     setError("");
     const { error: resetError } = await client.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: window.location.origin,
+      redirectTo: new URL(import.meta.env.BASE_URL, window.location.href).toString(),
     });
     if (resetError) setError(resetError.message);
     else setResetSent(true);
