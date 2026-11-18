@@ -619,7 +619,7 @@ export default function App() {
     async function loadRecipes() {
       const { data, error: recipesError } = await client!
         .from("recipes")
-        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_steps(id, instruction, position, step_ingredients:recipe_step_ingredients(id, recipe_ingredient_id, quantity, unit, recipe_ingredient:recipe_ingredients(name))), recipe_ratings(user_id, rating)")
+        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_ratings(user_id, rating)")
         .eq("household_id", household!.id)
         .order("title");
       if (recipesError) throw recipesError;
@@ -636,7 +636,6 @@ export default function App() {
         emoji: string;
         created_at: string;
         recipe_ingredients: Recipe["recipe_ingredients"];
-        recipe_steps: Recipe["recipe_steps"];
         recipe_ratings: Recipe["recipe_ratings"];
       }>;
       const cleanRecipes = recipeRows.map((value) => {
@@ -645,9 +644,6 @@ export default function App() {
           recipe_ingredients: value.recipe_ingredients.slice().sort(
             (a, b) => a.sort_order - b.sort_order,
           ),
-          recipe_steps: value.recipe_steps
-            .map((step) => ({ ...step, position: Number(step.position) }))
-            .sort((a, b) => Number(a.position) - Number(b.position)),
         };
       });
       if (active) setRecipes(cleanRecipes);
@@ -826,7 +822,7 @@ export default function App() {
       if (!client) throw new Error("Supabase ist nicht verbunden.");
       const sourceUrl = payload.source_url.trim();
       const { data: recipeId, error: saveError } = await client.rpc("save_recipe_with_category", {
-        recipe_payload: payload,
+        recipe_payload: { ...payload, steps: [] },
         target_recipe_id: editorRecipe?.id ?? null,
       });
       if (saveError) throw saveError;
@@ -1488,6 +1484,7 @@ export default function App() {
               key={editorRecipe?.id ?? "new"}
               initial={editorRecipe ?? undefined}
               busy={busy}
+              error={error}
               onCancel={() => { setEditorOpen(false); setEditorRecipe(null); }}
               onSave={createRecipe}
               onDelete={editorRecipe ? () => deleteRecipe(editorRecipe) : undefined}
@@ -1500,10 +1497,12 @@ export default function App() {
           recipe={selectedRecipe}
           currentUserId={session.user.id}
           busy={busy}
+          error={error}
           onRate={(rating) => void rateRecipe(selectedRecipe.id, rating)}
           onClose={() => setSelectedRecipe(null)}
           onEdit={() => { setEditorRecipe(selectedRecipe); setEditorOpen(true); setSelectedRecipe(null); }}
           onCook={() => { setCookingRecipe(selectedRecipe); setSelectedRecipe(null); }}
+          onDelete={() => void deleteRecipe(selectedRecipe)}
         />
       )}
       {cookingRecipe && <CookingMode recipe={cookingRecipe} onClose={() => setCookingRecipe(null)} />}

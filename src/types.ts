@@ -14,21 +14,6 @@ export interface RecipeIngredient {
   sort_order: number;
 }
 
-export interface RecipeStepIngredient {
-  id: string;
-  recipe_ingredient_id: string;
-  quantity: number | null;
-  unit: string;
-  recipe_ingredient?: Pick<RecipeIngredient, "name">;
-}
-
-export interface RecipeStep {
-  id: string;
-  instruction: string;
-  position: number;
-  step_ingredients: RecipeStepIngredient[];
-}
-
 export interface RecipeRating {
   user_id: string;
   rating: number;
@@ -47,7 +32,6 @@ export interface Recipe {
   emoji: string;
   created_at: string;
   recipe_ingredients: RecipeIngredient[];
-  recipe_steps: RecipeStep[];
   recipe_ratings: RecipeRating[];
 }
 

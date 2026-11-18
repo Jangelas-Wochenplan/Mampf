@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, Check, X } from "lucide-react";
+import { Check, CookingPot, X } from "lucide-react";
 import type { Recipe } from "../../types";
+import { formatQuantity } from "../../lib/format";
 import RecipeArtwork from "./RecipeArtwork";
 
 interface CookingModeProps {
@@ -8,23 +9,20 @@ interface CookingModeProps {
   onClose: () => void;
 }
 
-function scaledAmount(quantity: number | null, servings: number, unit: string): string {
-  if (quantity === null) return "nach Bedarf";
-  const amount = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 }).format(
-    quantity * (servings / recipeBaseServings),
-  );
-  return `${amount}${unit ? ` ${unit}` : ""}`;
-}
-
-const recipeBaseServings = 4;
-
 export default function CookingMode({ recipe, onClose }: CookingModeProps) {
-  const [stepIndex, setStepIndex] = useState(0);
   const [servings, setServings] = useState(4);
-  const [done, setDone] = useState(false);
-  const steps = recipe.recipe_steps.slice().sort((a, b) => a.position - b.position);
-  const step = steps[stepIndex];
-  const progress = steps.length ? ((stepIndex + 1) / steps.length) * 100 : 100;
+  const [checkedIngredients, setCheckedIngredients] = useState<Set<string>>(() => new Set());
+  const ingredients = recipe.recipe_ingredients.slice().sort((a, b) => a.sort_order - b.sort_order);
+  const allChecked = ingredients.length > 0 && checkedIngredients.size === ingredients.length;
+
+  function toggleIngredient(ingredientId: string) {
+    setCheckedIngredients((current) => {
+      const next = new Set(current);
+      if (next.has(ingredientId)) next.delete(ingredientId);
+      else next.add(ingredientId);
+      return next;
+    });
+  }
 
   return (
     <div className="cooking-overlay" role="dialog" aria-modal="true" aria-label="Kochmodus">
@@ -38,62 +36,43 @@ export default function CookingMode({ recipe, onClose }: CookingModeProps) {
           <X size={20} />
         </button>
       </header>
-      {!done ? (
-        <main className="cooking-content">
-          <div className="cooking-progress-label">
-            <span>Schritt {stepIndex + 1} von {steps.length}</span>
-            <label>
-              Portionen
-              <select value={servings} onChange={(event) => setServings(Number(event.target.value))}>
-                {[1, 2, 3, 4, 5, 6, 8, 10, 12].map((count) => <option key={count}>{count}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
-          <div className="cooking-step-number">{String(stepIndex + 1).padStart(2, "0")}</div>
-          <p className="eyebrow">Jetzt wird gekocht</p>
-          <h1>{step?.instruction ?? "Alles bereit!"}</h1>
-          {step && step.step_ingredients.length > 0 && (
-            <section className="step-ingredients">
-              <h2>Für diesen Schritt</h2>
-              <div className="step-ingredient-pills">
-                {step.step_ingredients.map((item) => (
-                  <span key={item.id}>
-                    <strong>{scaledAmount(item.quantity, servings, item.unit)}</strong>
-                    {" "}{item.recipe_ingredient?.name ?? "Zutat"}
-                  </span>
-                ))}
-              </div>
-            </section>
-          )}
-          <div className="cooking-navigation">
-            <button
-              className="button button-quiet"
-              onClick={() => setStepIndex((current) => Math.max(0, current - 1))}
-              disabled={stepIndex === 0}
-            >
-              <ArrowLeft size={17} /> Zurück
-            </button>
-            {stepIndex < steps.length - 1 ? (
-              <button className="button button-primary" onClick={() => setStepIndex((current) => current + 1)}>
-                Nächster Schritt <ArrowRight size={17} />
-              </button>
-            ) : (
-              <button className="button button-primary" onClick={() => setDone(true)}>
-                Fertig kochen <Check size={17} />
-              </button>
-            )}
-          </div>
-        </main>
-      ) : (
-        <main className="cooking-content cooking-finished">
-          <div className="finished-mark"><Check size={34} /></div>
-          <p className="eyebrow">Guten Appetit</p>
-          <h1>Das sieht nach einem guten Essen aus.</h1>
-          <p>{recipe.title} ist fertig. Lasst es euch schmecken!</p>
-          <button className="button button-primary" onClick={onClose}>Zurück zum Wochenplan</button>
-        </main>
-      )}
+      <main className="cooking-content cooking-checklist">
+        <div className="cooking-progress-label">
+          <span>{checkedIngredients.size} von {ingredients.length} Zutaten bereit</span>
+          <label>
+            Portionen
+            <select value={servings} onChange={(event) => setServings(Number(event.target.value))}>
+              {[1, 2, 3, 4, 5, 6, 8, 10, 12].map((count) => <option key={count} value={count}>{count}</option>)}
+            </select>
+          </label>
+        </div>
+        <p className="eyebrow"><CookingPot size={15} /> Alles im Blick</p>
+        <h1>{recipe.title}</h1>
+        <p className="cooking-instruction">Stelle die Zutaten bereit und hake sie ab, sobald sie bereitstehen.</p>
+        <section className="cooking-ingredients" aria-label="Zutatenliste">
+          <h2>Zutaten</h2>
+          <ul className="ingredient-list">
+            {ingredients.map((ingredient) => (
+              <li key={ingredient.id} className={checkedIngredients.has(ingredient.id) ? "cooking-ingredient checked" : "cooking-ingredient"}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={checkedIngredients.has(ingredient.id)}
+                    onChange={() => toggleIngredient(ingredient.id)}
+                  />
+                  <span>{ingredient.name}</span>
+                  <strong>{formatQuantity(ingredient.quantity, ingredient.unit, servings)}</strong>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </section>
+        <div className="cooking-navigation">
+          <button className="button button-primary" onClick={onClose}>
+            {allChecked ? "Fertig — Guten Appetit" : "Kochmodus schließen"} <Check size={17} />
+          </button>
+        </div>
+      </main>
     </div>
   );
 }
