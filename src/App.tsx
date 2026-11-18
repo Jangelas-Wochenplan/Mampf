@@ -13,6 +13,7 @@ import {
   Home,
   LogOut,
   Package,
+  Palette,
   Plus,
   Search,
   Settings2,
@@ -32,6 +33,7 @@ import { serializeMealPlan } from "./lib/meal-plan-payload";
 import { averageRating } from "./lib/ratings";
 import { comparePantryAvailability } from "./lib/pantry-matching";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { readSavedUITheme, saveUITheme, UI_THEMES, type UIThemeId } from "./lib/ui-themes";
 import type { AppView, Household, HouseholdRole, MealPlan, PantryItem, Recipe, ShoppingItem } from "./types";
 
 const PANTRY_IMAGE_BUCKET = "pantry-images";
@@ -549,12 +551,34 @@ export default function App() {
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [uiTheme, setUITheme] = useState<UIThemeId>(readSavedUITheme);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const profileTriggerRef = useRef<HTMLButtonElement>(null);
+  const suppressProfileFocusOpen = useRef(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [editorRecipe, setEditorRecipe] = useState<Recipe | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [cookingRecipe, setCookingRecipe] = useState<Recipe | null>(null);
   const [recipeSearch, setRecipeSearch] = useState("");
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = uiTheme;
+    document.documentElement.dataset.colorMode = UI_THEMES.find((theme) => theme.id === uiTheme)?.mode ?? "light";
+    if (!saveUITheme(uiTheme)) {
+      setNotice("Die Designauswahl gilt nur für diese Sitzung und konnte nicht gespeichert werden.");
+    }
+  }, [uiTheme]);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    function closeProfileMenu(event: PointerEvent) {
+      if (!(event.target instanceof Node) || !profileMenuRef.current?.contains(event.target)) setProfileMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", closeProfileMenu);
+    return () => document.removeEventListener("pointerdown", closeProfileMenu);
+  }, [profileMenuOpen]);
 
   useEffect(() => {
     if (!client) return;
@@ -1302,20 +1326,81 @@ export default function App() {
               <Plus size={16} /> <span>Einladen</span>
             </button>
           )}
-          <div className="profile-menu" title={session.user.email ?? ""}>
-            <span className="avatar">{localName(session.user.email, session.user.user_metadata.username)[0]?.toLocaleUpperCase("de-DE") ?? "M"}</span>
-            <span className="profile-name">{localName(session.user.email, session.user.user_metadata.username)}</span>
+          <div
+            ref={profileMenuRef}
+            className={`profile-menu${profileMenuOpen ? " is-open" : ""}`}
+            onMouseEnter={() => setProfileMenuOpen(true)}
+            onMouseLeave={() => setProfileMenuOpen(false)}
+            onFocus={() => {
+              if (suppressProfileFocusOpen.current) {
+                suppressProfileFocusOpen.current = false;
+                return;
+              }
+              setProfileMenuOpen(true);
+            }}
+            onBlur={(event) => {
+              if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setProfileMenuOpen(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setProfileMenuOpen(false);
+                suppressProfileFocusOpen.current = true;
+                profileTriggerRef.current?.focus();
+              }
+            }}
+          >
             <button
-              className="icon-button logout-button"
-              aria-label="Abmelden"
-              title="Abmelden"
-              onClick={() => void runAction(async () => {
-                const { error: signOutError } = await client.auth.signOut();
-                if (signOutError) throw signOutError;
-              })}
+              ref={profileTriggerRef}
+              type="button"
+              className="profile-menu-trigger"
+              aria-label="Profil und Designvorlagen"
+              aria-expanded={profileMenuOpen}
+              aria-controls="profile-flyout"
+              onClick={() => setProfileMenuOpen(true)}
             >
-              <LogOut size={17} />
+              <span className="avatar">{localName(session.user.email, session.user.user_metadata.username)[0]?.toLocaleUpperCase("de-DE") ?? "M"}</span>
+              <span className="profile-name">{localName(session.user.email, session.user.user_metadata.username)}</span>
+              <ChevronDown className="profile-menu-chevron" size={15} />
             </button>
+            <div className="profile-flyout" id="profile-flyout" aria-label="Design und Konto">
+              <div className="profile-flyout-user">
+                <strong>{localName(session.user.email, session.user.user_metadata.username)}</strong>
+                <small>{session.user.email}</small>
+              </div>
+              <div className="theme-picker-heading">
+                <span><Palette size={16} /> Oberfläche</span>
+                <small>10 Vorlagen</small>
+              </div>
+              <div className="theme-picker" role="group" aria-label="Designvorlage auswählen">
+                {UI_THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    className={`theme-option${uiTheme === theme.id ? " selected" : ""}`}
+                    aria-pressed={uiTheme === theme.id}
+                    onClick={() => setUITheme(theme.id)}
+                  >
+                    <span className={`theme-swatch theme-swatch--${theme.id}`} aria-hidden="true" />
+                    <span className="theme-option-copy">
+                      <strong>{theme.name}</strong>
+                      <small>{theme.style}</small>
+                    </span>
+                    <span className={`theme-mode-badge ${theme.mode}`}>{theme.mode === "dark" ? "Dunkel" : "Hell"}</span>
+                    {uiTheme === theme.id && <Check className="theme-selected-check" size={16} aria-hidden="true" />}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="profile-logout"
+                onClick={() => void runAction(async () => {
+                  const { error: signOutError } = await client.auth.signOut();
+                  if (signOutError) throw signOutError;
+                })}
+              >
+                <LogOut size={17} /> Abmelden
+              </button>
+            </div>
           </div>
         </div>
       </header>
