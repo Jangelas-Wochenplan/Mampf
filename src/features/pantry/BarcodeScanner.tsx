@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Camera, ScanLine, X } from "lucide-react";
+import { isValidProductBarcode, StableBarcodeReader } from "../../lib/barcode-scan";
 
 interface BarcodeDetectorApi {
-  detect(source: HTMLVideoElement): Promise<Array<{ rawValue: string }>>;
+  detect(source: HTMLVideoElement): Promise<Array<{ rawValue: string; format: string }>>;
+}
+
+interface BarcodeDetectorConstructor {
+  new(options?: { formats: string[] }): BarcodeDetectorApi;
+  getSupportedFormats?: () => Promise<string[]>;
 }
 
 interface WindowWithBarcodeDetector extends Window {
-  BarcodeDetector?: new () => BarcodeDetectorApi;
+  BarcodeDetector?: BarcodeDetectorConstructor;
 }
 
 interface BarcodeScannerProps {
@@ -18,6 +24,7 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
   const videoRef = useRef<HTMLVideoElement>(null);
   const onDetectedRef = useRef(onDetected);
   const [manualBarcode, setManualBarcode] = useState("");
+  const [detectedBarcode, setDetectedBarcode] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraAvailable, setCameraAvailable] = useState(false);
   const [message, setMessage] = useState("");
@@ -36,7 +43,7 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
     const BrowserDetector = Detector;
 
     let active = true;
-    let animationFrame = 0;
+    let scanTimer = 0;
     let stream: MediaStream | null = null;
     async function startCamera() {
       try {
@@ -45,7 +52,17 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
           setMessage("Die Kamera ist in diesem Browser nicht verfügbar. Du kannst den Barcode manuell eingeben.");
           return;
         }
-        const detector = new BrowserDetector();
+        let supportedFormats: string[] | undefined;
+        try {
+          supportedFormats = await BrowserDetector.getSupportedFormats?.();
+        } catch {
+          supportedFormats = undefined;
+        }
+        const productFormats = ["ean_13", "ean_8", "upc_a", "upc_e", "itf", "code_128"];
+        const formats = supportedFormats
+          ? productFormats.filter((format) => supportedFormats.includes(format))
+          : [];
+        const detector = new BrowserDetector(formats.length ? { formats } : undefined);
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: { facingMode: { ideal: "environment" } },
@@ -59,22 +76,28 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
         video.srcObject = stream;
         await video.play();
         setCameraReady(true);
+        setMessage("Halte den Code ruhig und mittig im Rahmen. Nach mehreren gleichen Messungen kannst du den Wert prüfen.");
+        const stableReader = new StableBarcodeReader(3);
 
         async function scanFrame() {
           if (!active || !video) return;
           try {
             if (video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
               const results = await detector.detect(video);
-              const barcode = results.find((result) => result.rawValue.trim())?.rawValue.trim();
+              const candidate = results.find((result) => isValidProductBarcode(result.rawValue.trim(), result.format));
+              const barcode = stableReader.observe(candidate?.rawValue.trim() ?? null);
               if (barcode) {
-                onDetectedRef.current(barcode);
+                setManualBarcode(barcode);
+                setDetectedBarcode(true);
+                setMessage("Barcode stabil erkannt. Prüfe den Wert und übernimm ihn.");
                 return;
               }
             }
           } catch {
+            stableReader.reset();
             setMessage("Der Barcode konnte nicht gelesen werden. Richte die Kamera auf den Code oder gib ihn manuell ein.");
           }
-          if (active) animationFrame = window.requestAnimationFrame(() => void scanFrame());
+          if (active) scanTimer = window.setTimeout(() => void scanFrame(), 250);
         }
 
         void scanFrame();
@@ -90,7 +113,7 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
     void startCamera();
     return () => {
       active = false;
-      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(scanTimer);
       stream?.getTracks().forEach((track) => track.stop());
     };
   }, []);
@@ -120,21 +143,23 @@ export default function BarcodeScanner({ onDetected, onClose }: BarcodeScannerPr
         <div className={cameraReady ? "barcode-camera" : "barcode-camera barcode-camera-idle"}>
           {cameraAvailable && <video ref={videoRef} autoPlay muted playsInline aria-label="Kamerabild zum Scannen des Barcodes" />}
           {!cameraReady && <div><Camera size={28} /><span>{cameraAvailable ? "Kamera wird vorbereitet …" : "Automatisches Scannen nicht verfügbar"}</span></div>}
-          {cameraReady && <span className="barcode-scan-guide" aria-hidden="true" />}
+          {cameraReady && <span className={`barcode-scan-guide${detectedBarcode ? " barcode-scan-guide-detected" : ""}`} aria-hidden="true" />}
         </div>
         {message && <p className="pantry-scan-message" role="status">{message}</p>}
         <form className="pantry-barcode-form" onSubmit={submitManualBarcode}>
           <label className="field-label">
             Barcode manuell eingeben
             <input
-              autoFocus
               value={manualBarcode}
-              onChange={(event) => setManualBarcode(event.target.value)}
+              onChange={(event) => {
+                setManualBarcode(event.target.value);
+                setDetectedBarcode(false);
+              }}
               placeholder="z. B. 4001234567890"
               maxLength={64}
             />
           </label>
-          <button className="button button-primary" disabled={!manualBarcode.trim()}><ScanLine size={17} /> Barcode übernehmen</button>
+          <button className="button button-primary" disabled={!manualBarcode.trim()}><ScanLine size={17} /> {detectedBarcode ? "Erkannten Barcode prüfen & übernehmen" : "Barcode übernehmen"}</button>
         </form>
       </section>
     </div>

@@ -3,7 +3,7 @@ import { ImagePlus, Package, Pencil, Plus, ScanLine, Trash2, X } from "lucide-re
 import { formatQuantity } from "../../lib/format";
 import { commonIngredientUnits, ingredientUnitGroups } from "../../lib/ingredient-units";
 import { pantryErrorMessage } from "../../lib/pantry-errors";
-import { pantryImageFormat } from "../../lib/pantry-images";
+import { isPantryImageCandidate } from "../../lib/pantry-images";
 import type { PantryItem } from "../../types";
 import BarcodeScanner from "./BarcodeScanner";
 
@@ -131,11 +131,11 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
       setFormError("Bitte gib eine zugekaufte Menge größer als 0 ein.");
       return;
     }
-    if (imageFile && imageFile.size > 8 * 1024 * 1024) {
-      setFormError("Das Bild darf höchstens 8 MB groß sein.");
+    if (imageFile && imageFile.size > 40 * 1024 * 1024) {
+      setFormError("Das Bild darf höchstens 40 MB groß sein.");
       return;
     }
-    if (imageFile && !pantryImageFormat(imageFile)) {
+    if (imageFile && !isPantryImageCandidate(imageFile)) {
       setFormError("Bitte wähle ein JPEG-, PNG-, WebP- oder GIF-Bild aus.");
       return;
     }
@@ -299,7 +299,7 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
                     <input
                       ref={photoInputRef}
                       type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif"
                       capture="environment"
                       onChange={(event) => {
                         setImageFile(event.target.files?.[0] ?? null);
@@ -314,7 +314,7 @@ export default function PantryPage({ items, busy, onFindByBarcode, onSave, onDel
                       if (photoInputRef.current) photoInputRef.current.value = "";
                     }}>Bild entfernen</button>
                   )}
-                  <small>Foto aufnehmen oder aus der Mediathek wählen · maximal 8 MB</small>
+                  <small>Foto aufnehmen oder auswählen · große Fotos werden verkleinert, HEIC wird umgewandelt</small>
                 </div>
               </div>
               {formError && <p className="form-error" role="alert">{formError}</p>}
