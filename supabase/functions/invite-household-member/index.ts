@@ -59,11 +59,10 @@ Deno.serve(async (request) => {
   if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) {
     return respond({ error: "Invitation request must contain an email address and household." }, 400);
   }
-  const payload = requestBody as { email?: unknown; household_id?: unknown };
-  const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+  const payload = requestBody as { household_id?: unknown };
   const householdId = typeof payload.household_id === "string" ? payload.household_id : "";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || !householdId) {
-    return respond({ error: "Enter a valid email address." }, 400);
+  if (!householdId) {
+    return respond({ error: "A household is required." }, 400);
   }
 
   const { data: membership, error: membershipError } = await adminClient
@@ -87,51 +86,17 @@ Deno.serve(async (request) => {
     byte.toString(16).padStart(2, "0"),
   ).join("");
 
-  const { error: previousInviteError } = await adminClient
-    .from("household_invitations")
-    .delete()
-    .eq("household_id", householdId)
-    .eq("email", email)
-    .is("accepted_at", null);
-  if (previousInviteError) {
-    console.error("Could not replace the previous household invitation.", previousInviteError);
-    return respond({ error: "Could not prepare a new household invitation." }, 500);
-  }
-
   const { error: insertError } = await adminClient.from("household_invitations").insert({
     household_id: householdId,
-    email,
     token_hash: tokenHash,
     invited_by: authData.user.id,
   });
   if (insertError) {
     console.error("Could not save household invitation.", insertError);
-    if (insertError.code === "23505") {
-      return respond({ error: "An open invitation for this email already exists." }, 409);
-    }
     return respond({ error: "Could not create the household invitation." }, 500);
   }
 
-  const emailInvitationUrl = new URL(appUrl);
-  emailInvitationUrl.searchParams.set("household_invite", token);
-  emailInvitationUrl.searchParams.set("set_password", "true");
-  const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-    redirectTo: emailInvitationUrl.toString(),
-  });
-  if (inviteError) {
-    if (/already registered|already exists/i.test(inviteError.message)) {
-      const invitationUrl = new URL(appUrl);
-      invitationUrl.searchParams.set("household_invite", token);
-      return respond({ sent: false, invite_url: invitationUrl.toString() });
-    }
-    const { error: cleanupError } = await adminClient
-      .from("household_invitations")
-      .delete()
-      .eq("token_hash", tokenHash);
-    if (cleanupError) console.error("Could not remove a failed household invitation.", cleanupError);
-    console.error("Could not send household invitation email.", inviteError);
-    return respond({ error: "The invitation email could not be sent. Check Supabase Auth email settings." }, 502);
-  }
-
-  return respond({ sent: true });
+  const invitationUrl = new URL(appUrl);
+  invitationUrl.searchParams.set("invite", token);
+  return respond({ invite_url: invitationUrl.toString() });
 });

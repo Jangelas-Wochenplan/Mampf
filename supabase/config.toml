@@ -2,3 +2,9 @@ project_id = "mampf"
 
 [functions.invite-household-member]
 verify_jwt = false
+
+[functions.login-with-username]
+verify_jwt = false
+
+[functions.complete-household-registration]
+verify_jwt = false
