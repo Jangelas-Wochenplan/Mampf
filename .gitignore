@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+supabase/.temp/
 .env
 .env.*
 !.env.example
