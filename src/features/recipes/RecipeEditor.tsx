@@ -22,6 +22,7 @@ interface StepDraft {
 export interface RecipePayload {
   title: string;
   description: string;
+  category: string;
   prep_minutes: string;
   servings: number;
   emoji: string;
@@ -37,6 +38,84 @@ interface RecipeEditorProps {
   busy: boolean;
   onCancel: () => void;
   onSave: (payload: RecipePayload) => Promise<void>;
+}
+
+const unitGroups = [
+  {
+    label: "Gewicht",
+    units: [
+      { value: "g", label: "Gramm (g)" },
+      { value: "kg", label: "Kilogramm (kg)" },
+    ],
+  },
+  {
+    label: "Volumen",
+    units: [
+      { value: "ml", label: "Milliliter (ml)" },
+      { value: "l", label: "Liter (l)" },
+    ],
+  },
+  {
+    label: "Kochmaße",
+    units: [
+      { value: "TL", label: "Teelöffel (TL)" },
+      { value: "EL", label: "Esslöffel (EL)" },
+      { value: "Tasse", label: "Tasse" },
+      { value: "Prise", label: "Prise" },
+      { value: "Spritzer", label: "Spritzer" },
+      { value: "Handvoll", label: "Handvoll" },
+    ],
+  },
+  {
+    label: "Stück und Packungen",
+    units: [
+      { value: "Stück", label: "Stück" },
+      { value: "Bund", label: "Bund" },
+      { value: "Zehe", label: "Zehe" },
+      { value: "Dose", label: "Dose" },
+      { value: "Packung", label: "Packung" },
+      { value: "Päckchen", label: "Päckchen" },
+      { value: "Scheibe", label: "Scheibe" },
+      { value: "Blatt", label: "Blatt" },
+      { value: "Stange", label: "Stange" },
+      { value: "Kopf", label: "Kopf" },
+      { value: "Flasche", label: "Flasche" },
+      { value: "Glas", label: "Glas" },
+      { value: "Becher", label: "Becher" },
+      { value: "Zweig", label: "Zweig" },
+      { value: "Portion", label: "Portion" },
+    ],
+  },
+];
+
+const commonUnits = new Set(unitGroups.flatMap((group) => group.units.map((unit) => unit.value)));
+
+function UnitSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">Einheit wählen</option>
+      {unitGroups.map((group) => (
+        <optgroup key={group.label} label={group.label}>
+          {group.units.map((unit) => (
+            <option key={unit.value} value={unit.value}>{unit.label}</option>
+          ))}
+        </optgroup>
+      ))}
+      {value && !commonUnits.has(value) && (
+        <optgroup label="Bisherige Einheit">
+          <option value={value}>{value}</option>
+        </optgroup>
+      )}
+    </select>
+  );
 }
 
 function initialIngredients(recipe?: Recipe): IngredientDraft[] {
@@ -82,6 +161,7 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
   const ingredients = initialIngredients(initial);
   const [title, setTitle] = useState(initial?.title ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [category, setCategory] = useState(initial?.category ?? "");
   const [prepMinutes, setPrepMinutes] = useState(
     initial?.prep_minutes === null || initial?.prep_minutes === undefined
       ? ""
@@ -180,6 +260,7 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
     await onSave({
       title: title.trim(),
       description: description.trim(),
+      category: category.trim(),
       prep_minutes: prepMinutes.trim(),
       servings: 4,
       emoji,
@@ -238,6 +319,21 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
         </label>
       </div>
       <label className="field-label">
+        Kategorie
+        <input
+          list="recipe-category-suggestions"
+          value={category}
+          onChange={(event) => setCategory(event.target.value)}
+          placeholder="z. B. Lieblingsessen"
+          maxLength={50}
+        />
+        <datalist id="recipe-category-suggestions">
+          {["Lieblingsessen", "Ausprobieren", "Sonntagsessen", "Schnell & einfach", "Vegetarisch", "Familienklassiker"].map((item) => (
+            <option key={item} value={item} />
+          ))}
+        </datalist>
+      </label>
+      <label className="field-label">
         Karten-Symbol
         <select value={emoji} onChange={(event) => setEmoji(event.target.value)}>
           {["🍲", "🍝", "🥗", "🍛", "🥘", "🍜", "🌮", "🍕", "🥔"].map((item) => (
@@ -277,11 +373,10 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
               value={ingredient.quantity}
               onChange={(event) => updateIngredient(index, { quantity: event.target.value })}
             />
-            <input
-              aria-label={`Einheit für Zutat ${index + 1}`}
-              placeholder="Einheit"
+            <UnitSelect
+              label={`Einheit für Zutat ${index + 1}`}
               value={ingredient.unit}
-              onChange={(event) => updateIngredient(index, { unit: event.target.value })}
+              onChange={(unit) => updateIngredient(index, { unit })}
             />
             <button
               type="button"
@@ -360,11 +455,10 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
                   value={stepIngredient.quantity}
                   onChange={(event) => updateStepIngredient(stepIndex, linkIndex, { quantity: event.target.value })}
                 />
-                <input
-                  aria-label="Einheit"
-                  placeholder="Einheit"
+                <UnitSelect
+                  label="Einheit für Schrittzutat"
                   value={stepIngredient.unit}
-                  onChange={(event) => updateStepIngredient(stepIndex, linkIndex, { unit: event.target.value })}
+                  onChange={(unit) => updateStepIngredient(stepIndex, linkIndex, { unit })}
                 />
                 <button
                   type="button"

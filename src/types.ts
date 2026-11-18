@@ -29,17 +29,24 @@ export interface RecipeStep {
   step_ingredients: RecipeStepIngredient[];
 }
 
+export interface RecipeRating {
+  user_id: string;
+  rating: number;
+}
+
 export interface Recipe {
   id: string;
   household_id: string;
   title: string;
   description: string;
+  category: string;
   prep_minutes: number | null;
   servings: number;
   emoji: string;
   created_at: string;
   recipe_ingredients: RecipeIngredient[];
   recipe_steps: RecipeStep[];
+  recipe_ratings: RecipeRating[];
 }
 
 export interface PlanDay {

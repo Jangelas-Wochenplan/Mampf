@@ -26,6 +26,7 @@ import RecipeDetail from "./features/recipes/RecipeDetail";
 import RecipeEditor, { type RecipePayload } from "./features/recipes/RecipeEditor";
 import { addDays, formatDateKey, formatQuantity, localDateKey, mondayOf } from "./lib/format";
 import { chooseRecipesForWeek, type PlannedDay, type RecipeUsage } from "./lib/meal-planning";
+import { averageRating } from "./lib/ratings";
 import { aggregateIngredients } from "./lib/shopping-list";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type { AppView, Household, HouseholdRole, MealPlan, Recipe, ShoppingItem } from "./types";
@@ -618,7 +619,7 @@ export default function App() {
     async function loadRecipes() {
       const { data, error: recipesError } = await client!
         .from("recipes")
-        .select("id, household_id, title, description, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_steps(id, instruction, position, step_ingredients:recipe_step_ingredients(id, recipe_ingredient_id, quantity, unit, recipe_ingredient:recipe_ingredients(name)))")
+        .select("id, household_id, title, description, category, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_steps(id, instruction, position, step_ingredients:recipe_step_ingredients(id, recipe_ingredient_id, quantity, unit, recipe_ingredient:recipe_ingredients(name))), recipe_ratings(user_id, rating)")
         .eq("household_id", household!.id)
         .order("title");
       if (recipesError) throw recipesError;
@@ -627,12 +628,14 @@ export default function App() {
         household_id: string;
         title: string;
         description: string;
+        category: string;
         prep_minutes: number | null;
         servings: number;
         emoji: string;
         created_at: string;
         recipe_ingredients: Recipe["recipe_ingredients"];
         recipe_steps: Recipe["recipe_steps"];
+        recipe_ratings: Recipe["recipe_ratings"];
       }>;
       const cleanRecipes = recipeRows.map((value) => {
         return {
@@ -699,7 +702,7 @@ export default function App() {
     const search = recipeSearch.trim().toLocaleLowerCase("de-DE");
     if (!search) return recipes;
     return recipes.filter((recipe) =>
-      `${recipe.title} ${recipe.description}`.toLocaleLowerCase("de-DE").includes(search),
+      `${recipe.title} ${recipe.description} ${recipe.category}`.toLocaleLowerCase("de-DE").includes(search),
     );
   }, [recipes, recipeSearch]);
   const dayRows = useMemo(() => {
@@ -839,7 +842,7 @@ export default function App() {
     setError("");
     try {
       if (!client) throw new Error("Supabase ist nicht verbunden.");
-      const { error: saveError } = await client.rpc("save_recipe", {
+      const { error: saveError } = await client.rpc("save_recipe_with_category", {
         recipe_payload: payload,
         target_recipe_id: editorRecipe?.id ?? null,
       });
@@ -855,6 +858,30 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function rateRecipe(recipeId: string, rating: number) {
+    await runAction(async () => {
+      if (!client || !session) throw new Error("Du musst angemeldet sein, um ein Rezept zu bewerten.");
+      const { error: ratingError } = await client.from("recipe_ratings").upsert(
+        { recipe_id: recipeId, user_id: session.user.id, rating },
+        { onConflict: "recipe_id,user_id" },
+      );
+      if (ratingError) throw ratingError;
+
+      const updateRating = (recipe: Recipe): Recipe => recipe.id === recipeId
+        ? {
+          ...recipe,
+          recipe_ratings: [
+            ...recipe.recipe_ratings.filter((entry) => entry.user_id !== session.user.id),
+            { user_id: session.user.id, rating },
+          ],
+        }
+        : recipe;
+      setRecipes((current) => current.map(updateRating));
+      setSelectedRecipe((current) => current ? updateRating(current) : current);
+      setNotice("Deine Bewertung wurde gespeichert.");
+    });
   }
 
   async function inviteMember(): Promise<string> {
@@ -1314,7 +1341,23 @@ export default function App() {
                   <article className={`recipe-card recipe-tone-${index % 4}`} key={recipe.id}>
                     <button className="recipe-card-open" onClick={() => setSelectedRecipe(recipe)} aria-label={`${recipe.title} ansehen`}>
                       <div className="recipe-card-art"><span>{recipe.emoji}</span><i>{["✳", "✦", "·", "✻"][index % 4]}</i><small>{recipe.prep_minutes ? `${recipe.prep_minutes} MIN` : "MIT LIEBE"}</small></div>
-                      <div className="recipe-card-copy"><div><h2>{recipe.title}</h2><p>{recipe.description || "Ein neues Lieblingsgericht für euren Tisch."}</p></div><span className="recipe-card-arrow"><ArrowRight size={17} /></span></div>
+                      <div className="recipe-card-copy">
+                        <div>
+                          <h2>{recipe.title}</h2>
+                          <p>{recipe.description || "Ein neues Lieblingsgericht für euren Tisch."}</p>
+                          {(recipe.category || recipe.recipe_ratings.length > 0) && (
+                            <div className="recipe-card-meta">
+                              {recipe.category && <span className="category-chip">{recipe.category}</span>}
+                              {recipe.recipe_ratings.length > 0 && (
+                                <span className="card-rating">
+                                  ★ {averageRating(recipe.recipe_ratings)?.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <span className="recipe-card-arrow"><ArrowRight size={17} /></span>
+                      </div>
                     </button>
                   </article>
                 ))}
@@ -1406,6 +1449,9 @@ export default function App() {
       {selectedRecipe && (
         <RecipeDetail
           recipe={selectedRecipe}
+          currentUserId={session.user.id}
+          busy={busy}
+          onRate={(rating) => void rateRecipe(selectedRecipe.id, rating)}
           onClose={() => setSelectedRecipe(null)}
           onEdit={() => { setEditorRecipe(selectedRecipe); setEditorOpen(true); setSelectedRecipe(null); }}
           onCook={() => { setCookingRecipe(selectedRecipe); setSelectedRecipe(null); }}

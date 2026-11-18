@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Clock3, CookingPot, Pencil, X } from "lucide-react";
+import { Clock3, CookingPot, Pencil, Star, X } from "lucide-react";
+import { averageRating, ratingByUser } from "../../lib/ratings";
 import type { Recipe } from "../../types";
 import { formatQuantity } from "../../lib/format";
 
@@ -8,12 +9,26 @@ interface RecipeDetailProps {
   onClose: () => void;
   onEdit: () => void;
   onCook: () => void;
+  currentUserId: string;
+  busy: boolean;
+  onRate: (rating: number) => void;
 }
 
-export default function RecipeDetail({ recipe, onClose, onEdit, onCook }: RecipeDetailProps) {
+export default function RecipeDetail({
+  recipe,
+  onClose,
+  onEdit,
+  onCook,
+  currentUserId,
+  busy,
+  onRate,
+}: RecipeDetailProps) {
   const [servings, setServings] = useState(4);
   const ingredients = recipe.recipe_ingredients.slice().sort((a, b) => a.sort_order - b.sort_order);
   const steps = recipe.recipe_steps.slice().sort((a, b) => a.position - b.position);
+  const ratings = recipe.recipe_ratings ?? [];
+  const average = averageRating(ratings);
+  const ownRating = ratingByUser(ratings, currentUserId);
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
@@ -31,8 +46,34 @@ export default function RecipeDetail({ recipe, onClose, onEdit, onCook }: Recipe
             <p className="eyebrow">Aus eurem Kochbuch</p>
             <h2 id="recipe-detail-title">{recipe.title}</h2>
             <p>{recipe.description || "Ein Lieblingsessen für die ganze Runde."}</p>
+            {recipe.category && <span className="category-chip">{recipe.category}</span>}
             {recipe.prep_minutes && <span className="meta-pill"><Clock3 size={15} /> {recipe.prep_minutes} Min.</span>}
           </div>
+        </div>
+        <div className="detail-rating">
+          <div>
+            <strong>Deine Bewertung</strong>
+            <div className="rating-stars" role="group" aria-label="Rezept mit Sternen bewerten">
+              {[1, 2, 3, 4, 5].map((rating) => (
+                <button
+                  type="button"
+                  key={rating}
+                  className={rating <= ownRating ? "rating-star selected" : "rating-star"}
+                  aria-label={`${rating} ${rating === 1 ? "Stern" : "Sterne"} vergeben`}
+                  aria-pressed={ownRating === rating}
+                  disabled={busy}
+                  onClick={() => onRate(rating)}
+                >
+                  <Star size={20} fill={rating <= ownRating ? "currentColor" : "none"} />
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="rating-average">
+            {average === null
+              ? "Noch keine Bewertungen"
+              : `Durchschnitt ${average.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} von 5 · ${ratings.length} ${ratings.length === 1 ? "Bewertung" : "Bewertungen"}`}
+          </p>
         </div>
         <div className="detail-columns">
           <section>
