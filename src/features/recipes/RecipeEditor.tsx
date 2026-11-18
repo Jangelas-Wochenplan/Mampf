@@ -307,7 +307,7 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
           placeholder="https://beispiel.de/rezept"
           maxLength={2048}
         />
-        <small className="field-help">Ohne Upload wird ein öffentliches Titelbild aus dem Link übernommen. Instagram und private Beiträge blockieren das teils; dann bitte das Bild hochladen.</small>
+        <small className="field-help">Ohne Upload wird das Titelbild über Microlink abgerufen, zugeschnitten und privat gespeichert. Instagram und private Beiträge blockieren das teils; dann bitte das Bild hochladen.</small>
       </label>
       <label className="field-label">
         Rezeptbild hochladen

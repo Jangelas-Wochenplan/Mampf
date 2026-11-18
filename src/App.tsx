@@ -38,7 +38,11 @@ import { averageRating } from "./lib/ratings";
 import { comparePantryAvailability } from "./lib/pantry-matching";
 import { pantryErrorMessage } from "./lib/pantry-errors";
 import { preparePantryImage } from "./lib/pantry-images";
-import { recipeImageStoragePath, RECIPE_IMAGE_BUCKET } from "./lib/recipe-images";
+import {
+  fetchRecipePreviewImage,
+  recipeImageStoragePath,
+  RECIPE_IMAGE_BUCKET,
+} from "./lib/recipe-images";
 import { isShoppingListComplete } from "./lib/shopping-archive";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { readSavedDarkMode, saveDarkMode, UI_THEME } from "./lib/ui-themes";
@@ -936,8 +940,22 @@ export default function App() {
     try {
       if (!client || !household) throw new Error("Supabase oder Haushalt ist nicht verfügbar.");
       const sourceUrl = payload.source_url.trim();
-      if (payload.image_file) {
-        const preparedImage = await preparePantryImage(payload.image_file);
+      const shouldResolveImage = Boolean(sourceUrl)
+        && (!editorRecipe?.image_storage_path || editorRecipe.source_url !== sourceUrl);
+      const shouldUseLegacyImageResolver = shouldResolveImage
+        && !(editorRecipe?.source_url === sourceUrl && editorRecipe.image_url);
+      let imageFile = payload.image_file;
+      let imageWarning = "";
+      if (!imageFile && shouldResolveImage) {
+        try {
+          imageFile = await fetchRecipePreviewImage(sourceUrl);
+        } catch (reason) {
+          imageWarning = `Der Link wurde gespeichert, aber das Titelbild konnte nicht ermittelt werden: ${errorText(reason)}`;
+        }
+      }
+
+      if (imageFile) {
+        const preparedImage = await preparePantryImage(imageFile);
         uploadedImagePath = `${household.id}/${crypto.randomUUID()}.${preparedImage.format.extension}`;
         const { error: uploadError } = await client.storage
           .from(RECIPE_IMAGE_BUCKET)
@@ -979,16 +997,22 @@ export default function App() {
       recipeSaved = true;
 
       let imageUrl: string | null = null;
-      let imageWarning = "";
-      if (!uploadedImagePath && sourceUrl) {
+      if (!uploadedImagePath && shouldUseLegacyImageResolver) {
         const { data, error: imageError } = await client.functions.invoke<{ image_url: string | null }>(
           "resolve-recipe-image",
           { body: { recipe_id: recipeId } },
         );
         if (imageError) {
-          imageWarning = `Der Link wurde gespeichert, aber das Titelbild konnte nicht ermittelt werden: ${await functionErrorText(imageError)}`;
+          if (!imageWarning) {
+            imageWarning = `Der Link wurde gespeichert, aber das Titelbild konnte nicht ermittelt werden: ${await functionErrorText(imageError)}`;
+          }
+        } else {
+          imageUrl = data?.image_url ?? null;
+          if (imageUrl) imageWarning = "";
         }
-        else imageUrl = data?.image_url ?? null;
+      }
+      if (shouldResolveImage && !uploadedImagePath && !imageUrl && !imageWarning) {
+        imageWarning = "Der Link wurde gespeichert, aber zu diesem Link wurde kein Titelbild gefunden.";
       }
 
       const oldImagePath = editorRecipe?.image_storage_path ?? null;
@@ -1008,9 +1032,7 @@ export default function App() {
       setNotice(
         imageWarning
           ? `${savedNotice} ${imageWarning}`
-          : !uploadedImagePath && sourceUrl && !imageUrl
-            ? `${savedNotice} Zu diesem Link wurde kein Titelbild gefunden.`
-            : savedNotice,
+          : savedNotice,
       );
       setSelectedRecipe(null);
     } catch (reason) {
