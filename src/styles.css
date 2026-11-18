@@ -410,6 +410,7 @@ p { color: var(--muted); line-height: 1.6; }
 .pantry-photo-row { display: flex; align-items: center; gap: 13px; margin-top: 18px; }
 .pantry-photo-preview { width: 92px; height: 92px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 14px; object-fit: cover; }
 .pantry-photo-controls { display: grid; justify-items: start; gap: 7px; }
+.pantry-photo-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pantry-photo-button { position: relative; overflow: hidden; }
 .pantry-photo-button input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .pantry-photo-controls small { color: #909689; font-size: 0.68rem; }
