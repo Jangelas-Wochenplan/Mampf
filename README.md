@@ -44,9 +44,9 @@ These are public browser configuration values, not secrets. The site is served a
    supabase db push
    ```
 
-   This is for a fresh project. If an existing database was created manually and its migration history is empty, do not run `supabase db push` until that history is reconciled; the CLI may try to recreate tables that already exist. Apply only verified, missing migration files through the SQL Editor instead.
+   This is for a fresh project. For an existing Mampf database initialized manually, use the consolidated script `supabase/setup_existing_database.sql` in the SQL Editor. Do not run `supabase db push` until the migration history is reconciled; the CLI may try to recreate tables that already exist.
 
-   To add the optional example recipes to a project with exactly one household, run `supabase/seed_example_recipes.sql` in the SQL Editor or with `supabase db query --remote --file supabase/seed_example_recipes.sql`. It skips recipes with matching titles.
+   The consolidated script includes the optional example recipes, skips recipes with matching titles, and expects exactly one household.
 
 4. In Supabase **Authentication → URL Configuration**, set the site URL to `https://jangelas-wochenplan.github.io/Mampf/` and allow `https://jangelas-wochenplan.github.io/Mampf/**` as a redirect URL. Configure email delivery if you want to use password-reset emails; household invitations are shared manually and do not send email.
 5. Set the Edge Functions' server-side `APP_ORIGIN` secret to the app URL, including `/Mampf/`, and deploy the account, invitation, and recipe-image functions:
