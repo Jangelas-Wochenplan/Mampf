@@ -38,7 +38,7 @@ import { averageRating } from "./lib/ratings";
 import { comparePantryAvailability } from "./lib/pantry-matching";
 import { pantryErrorMessage } from "./lib/pantry-errors";
 import { preparePantryImage } from "./lib/pantry-images";
-import { recipeStepsFromPreparation } from "./lib/recipe-preparation";
+import { recipeImageStoragePath, RECIPE_IMAGE_BUCKET } from "./lib/recipe-images";
 import { isShoppingListComplete } from "./lib/shopping-archive";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { readSavedDarkMode, saveDarkMode, UI_THEME } from "./lib/ui-themes";
@@ -677,7 +677,7 @@ export default function App() {
     async function loadRecipes() {
       const { data, error: recipesError } = await client!
         .from("recipes")
-        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_steps(id, instruction, position), recipe_ingredients(id, name, quantity, unit, sort_order), recipe_ratings(user_id, rating)")
+        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_steps(id, instruction, position, step_ingredients:recipe_step_ingredients(id, recipe_ingredient_id, quantity, unit, recipe_ingredient:recipe_ingredients(name))), recipe_ingredients(id, name, quantity, unit, sort_order), recipe_ratings(user_id, rating)")
         .eq("household_id", household!.id)
         .order("title");
       if (recipesError) throw recipesError;
@@ -703,9 +703,29 @@ export default function App() {
           recipe_ingredients: value.recipe_ingredients.slice().sort(
             (a, b) => a.sort_order - b.sort_order,
           ),
+          recipe_steps: (value.recipe_steps ?? []).map((step) => ({
+            ...step,
+            position: Number(step.position),
+            step_ingredients: (step.step_ingredients ?? []).map((stepIngredient) => ({
+              ...stepIngredient,
+              quantity: stepIngredient.quantity === null ? null : Number(stepIngredient.quantity),
+            })),
+          })).sort((a, b) => a.position - b.position),
         };
       });
-      if (active) setRecipes(cleanRecipes);
+      const recipesWithImages = await Promise.all(cleanRecipes.map(async (recipe) => {
+        const imagePath = recipeImageStoragePath(recipe.image_url);
+        if (!imagePath) return { ...recipe, image_storage_path: null };
+        const { data: signedImage, error: imageError } = await client!
+          .storage.from(RECIPE_IMAGE_BUCKET).createSignedUrl(imagePath, 60 * 60);
+        if (imageError) throw imageError;
+        return {
+          ...recipe,
+          image_url: signedImage.signedUrl,
+          image_storage_path: imagePath,
+        };
+      }));
+      if (active) setRecipes(recipesWithImages);
     }
     async function loadMembers() {
       const { data, error: membersError } = await client!
@@ -911,24 +931,74 @@ export default function App() {
   async function createRecipe(payload: RecipePayload) {
     setBusy(true);
     setError("");
+    let uploadedImagePath: string | null = null;
+    let recipeSaved = false;
     try {
-      if (!client) throw new Error("Supabase ist nicht verbunden.");
+      if (!client || !household) throw new Error("Supabase oder Haushalt ist nicht verfügbar.");
       const sourceUrl = payload.source_url.trim();
+      if (payload.image_file) {
+        const preparedImage = await preparePantryImage(payload.image_file);
+        uploadedImagePath = `${household.id}/${crypto.randomUUID()}.${preparedImage.format.extension}`;
+        const { error: uploadError } = await client.storage
+          .from(RECIPE_IMAGE_BUCKET)
+          .upload(uploadedImagePath, preparedImage.file, {
+            cacheControl: "3600",
+            contentType: preparedImage.format.contentType,
+            upsert: false,
+          });
+        if (uploadError) {
+          const code = "code" in uploadError && typeof uploadError.code === "string" ? uploadError.code : "";
+          const detail = [uploadError.message, code && `(${code})`].filter(Boolean).join(" ");
+          if (code === "42501" || /row-level security|permission denied/i.test(uploadError.message)) {
+            throw new Error(`Supabase blockiert den Rezeptbild-Upload. Prüfe, ob der private Bucket „recipe-images“ und die Policy „recipe_images_member_access“ vorhanden sind. ${detail}`);
+          }
+          throw new Error(`Rezeptbild-Upload fehlgeschlagen: ${detail}`);
+        }
+      }
+
+      const recipePayload = {
+        title: payload.title,
+        description: payload.description,
+        category: payload.category,
+        source_url: sourceUrl,
+        prep_minutes: payload.prep_minutes,
+        servings: payload.servings,
+        ingredients: payload.ingredients,
+        steps: payload.steps,
+      };
       const { data: recipeId, error: saveError } = await client.rpc("save_recipe_with_category", {
-        recipe_payload: { ...payload, steps: recipeStepsFromPreparation(payload.preparation) },
+        recipe_payload: {
+          ...recipePayload,
+          recipe_image_path: uploadedImagePath,
+          emoji: "",
+        },
         target_recipe_id: editorRecipe?.id ?? null,
       });
       if (saveError) throw saveError;
+      if (typeof recipeId !== "string") throw new Error("Die gespeicherte Rezept-ID wurde nicht zurückgegeben.");
+      recipeSaved = true;
 
       let imageUrl: string | null = null;
       let imageWarning = "";
-      if (sourceUrl && typeof recipeId === "string") {
+      if (!uploadedImagePath && sourceUrl) {
         const { data, error: imageError } = await client.functions.invoke<{ image_url: string | null }>(
           "resolve-recipe-image",
           { body: { recipe_id: recipeId } },
         );
-        if (imageError) imageWarning = await functionErrorText(imageError);
+        if (imageError) {
+          imageWarning = `Der Link wurde gespeichert, aber das Titelbild konnte nicht ermittelt werden: ${await functionErrorText(imageError)}`;
+        }
         else imageUrl = data?.image_url ?? null;
+      }
+
+      const oldImagePath = editorRecipe?.image_storage_path ?? null;
+      const imageWasReplaced = Boolean(uploadedImagePath)
+        || Boolean(editorRecipe && editorRecipe.source_url !== sourceUrl);
+      if (oldImagePath && imageWasReplaced) {
+        const { error: cleanupError } = await client.storage.from(RECIPE_IMAGE_BUCKET).remove([oldImagePath]);
+        if (cleanupError) {
+          imageWarning = `${imageWarning ? `${imageWarning} ` : ""}Das alte Rezeptbild konnte nicht entfernt werden: ${cleanupError.message}`;
+        }
       }
 
       setEditorOpen(false);
@@ -937,13 +1007,17 @@ export default function App() {
       const savedNotice = editorRecipe ? "Das Rezept wurde gemeinsam aktualisiert." : "Das Rezept ist in eurem Kochbuch.";
       setNotice(
         imageWarning
-          ? `${savedNotice} Der Link ist gespeichert, aber das Titelbild konnte nicht ermittelt werden: ${imageWarning}`
-          : sourceUrl && !imageUrl
+          ? `${savedNotice} ${imageWarning}`
+          : !uploadedImagePath && sourceUrl && !imageUrl
             ? `${savedNotice} Zu diesem Link wurde kein Titelbild gefunden.`
             : savedNotice,
       );
       setSelectedRecipe(null);
     } catch (reason) {
+      if (uploadedImagePath && !recipeSaved && client) {
+        const { error: cleanupError } = await client.storage.from(RECIPE_IMAGE_BUCKET).remove([uploadedImagePath]);
+        if (cleanupError) console.error("Could not clean up an unused recipe image upload.", cleanupError);
+      }
       setError(errorText(reason));
       throw reason;
     } finally {
@@ -988,12 +1062,21 @@ export default function App() {
         plans_payload: plansPayload,
       });
       if (deleteError) throw deleteError;
+      let imageCleanupWarning = "";
+      if (recipe.image_storage_path) {
+        const { error: imageCleanupError } = await client.storage
+          .from(RECIPE_IMAGE_BUCKET)
+          .remove([recipe.image_storage_path]);
+        if (imageCleanupError) {
+          imageCleanupWarning = ` Das Rezeptbild konnte nicht entfernt werden: ${imageCleanupError.message}`;
+        }
+      }
       setRecipes((current) => current.filter((candidate) => candidate.id !== recipe.id));
       setSelectedRecipe(null);
       setEditorOpen(false);
       setEditorRecipe(null);
       setWorkspaceRevision((revision) => revision + 1);
-      setNotice("Das Gericht wurde gelöscht. Betroffene Wochenpläne und Einkaufslisten wurden aktualisiert.");
+      setNotice(`Das Gericht wurde gelöscht. Betroffene Wochenpläne und Einkaufslisten wurden aktualisiert.${imageCleanupWarning}`);
     });
   }
 
@@ -1587,7 +1670,7 @@ export default function App() {
               <div className="today-illustration">
                 <div className="illustration-sun" />
                 <div className="illustration-scribble">✳</div>
-                <RecipeArtwork className="today-food" imageUrl={todayRecipe?.image_url} emoji={todayRecipe?.emoji ?? "🍲"} />
+                <RecipeArtwork className="today-food" imageUrl={todayRecipe?.image_url} showEmoji={false} />
               </div>
               <div className="today-card-decoration">M</div>
             </section>
@@ -1615,6 +1698,7 @@ export default function App() {
                             className="week-tile-art"
                             imageUrl={day.excluded ? null : recipe?.image_url}
                             emoji={day.excluded ? "☕" : recipe?.emoji ?? "＋"}
+                            showEmoji={day.excluded}
                           />
                           <span className="week-tile-name">{day.excluded ? "frei" : recipe?.title ?? "offen"}</span>
                           <span className="week-tile-marker">{isToday ? "heute" : `0${index + 1}`}</span>
@@ -1703,7 +1787,7 @@ export default function App() {
                             <div className="day-off-copy"><strong>Ein freier Abend</strong><span>Heute bleibt die Küche vielleicht kalt.</span></div>
                           ) : (
                             <button className="plan-meal" onClick={() => recipe && setSelectedRecipe(recipe)}>
-                              <RecipeArtwork className="plan-meal-art" imageUrl={recipe?.image_url} emoji={recipe?.emoji ?? "＋"} />
+                              <RecipeArtwork className="plan-meal-art" imageUrl={recipe?.image_url} showEmoji={false} />
                               <span><strong>{recipe?.title ?? "Gericht wählen"}</strong><small>{recipe?.description || "Aus eurem Kochbuch"}</small></span>
                             </button>
                           )}

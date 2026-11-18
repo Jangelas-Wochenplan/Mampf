@@ -18,6 +18,15 @@ export interface RecipeStep {
   id: string;
   instruction: string;
   position: number;
+  step_ingredients: RecipeStepIngredient[];
+}
+
+export interface RecipeStepIngredient {
+  id: string;
+  recipe_ingredient_id: string;
+  quantity: number | null;
+  unit: string;
+  recipe_ingredient: { name: string } | null;
 }
 
 export interface RecipeRating {
@@ -33,6 +42,7 @@ export interface Recipe {
   category: string;
   source_url: string;
   image_url: string | null;
+  image_storage_path?: string | null;
   prep_minutes: number | null;
   servings: number;
   emoji: string;

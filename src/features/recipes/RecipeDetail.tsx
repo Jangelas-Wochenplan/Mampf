@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Clock3, CookingPot, ExternalLink, Pencil, Star, Trash2, X } from "lucide-react";
 import RecipeArtwork from "./RecipeArtwork";
 import { averageRating, ratingByUser } from "../../lib/ratings";
-import { recipePreparationText } from "../../lib/recipe-preparation";
 import type { Recipe } from "../../types";
 import { formatQuantity } from "../../lib/format";
 
@@ -34,7 +33,7 @@ export default function RecipeDetail({
   const ratings = recipe.recipe_ratings ?? [];
   const average = averageRating(ratings);
   const ownRating = ratingByUser(ratings, currentUserId);
-  const preparation = recipePreparationText(recipe.recipe_steps);
+  const steps = recipe.recipe_steps.slice().sort((a, b) => a.position - b.position);
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
@@ -47,7 +46,7 @@ export default function RecipeDetail({
       >
         <button className="icon-button detail-close" onClick={onClose} aria-label="Schließen"><X size={20} /></button>
         <div className="detail-hero">
-          <RecipeArtwork className="recipe-art detail-art" imageUrl={recipe.image_url} emoji={recipe.emoji} />
+          <RecipeArtwork className="recipe-art detail-art" imageUrl={recipe.image_url} showEmoji={false} />
           <div>
             <p className="eyebrow">Aus eurem Kochbuch</p>
             <h2 id="recipe-detail-title">{recipe.title}</h2>
@@ -86,7 +85,7 @@ export default function RecipeDetail({
               : `Durchschnitt ${average.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} von 5 · ${ratings.length} ${ratings.length === 1 ? "Bewertung" : "Bewertungen"}`}
           </p>
         </div>
-        <div className="detail-columns detail-columns-single">
+        <div className="detail-columns">
           <section>
             <div className="section-title-row">
               <div><h3>Zutaten</h3><p>Auf eure Portionen angepasst</p></div>
@@ -106,13 +105,33 @@ export default function RecipeDetail({
               ))}
             </ul>
           </section>
-        </div>
-        {preparation && (
-          <section className="recipe-preparation">
-            <h3>Zubereitung</h3>
-            <p>{preparation}</p>
+          <section className="recipe-step-panel">
+            <div className="section-title-row">
+              <div><h3>Zubereitung</h3><p>{steps.length} {steps.length === 1 ? "Schritt" : "Schritte"}</p></div>
+            </div>
+            {steps.length > 0 ? (
+              <ol className="detail-step-list">
+                {steps.map((step, index) => (
+                  <li key={step.id}>
+                    <span className="step-count">{index + 1}</span>
+                    <div>
+                      <p>{step.instruction}</p>
+                      {step.step_ingredients.length > 0 && (
+                        <small>
+                          {step.step_ingredients.map((item) =>
+                            `${formatQuantity(item.quantity, item.unit, servings)} ${item.recipe_ingredient?.name ?? ""}`.trim(),
+                          ).join(" · ")}
+                        </small>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="recipe-step-empty">Für dieses Rezept wurden noch keine Schritte hinterlegt.</p>
+            )}
           </section>
-        )}
+        </div>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="detail-actions">
           <button className="button button-quiet danger-text recipe-delete-button" onClick={onDelete} disabled={busy}>
