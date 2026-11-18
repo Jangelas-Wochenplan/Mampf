@@ -22,6 +22,17 @@ Mampf is a private, invite-only dinner planner for one shared household. Members
 
 Vite explicitly exposes only `VITE_` and `NEXT_PUBLIC_` variables to the browser. The supplied Supabase variables are used without renaming them.
 
+## GitHub Pages deployment
+
+The workflow in `.github/workflows/deploy-pages.yml` builds and deploys the app to GitHub Pages whenever changes reach `main`. In **Repository → Settings → Pages**, select **GitHub Actions** as the build and deployment source.
+
+Add these repository variables under **Settings → Secrets and variables → Actions → Variables** before deployment:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+
+These are public browser configuration values, not secrets. The site is served at `https://jangelas-wochenplan.github.io/Mampf/`; Supabase authentication and row-level security protect household data. The Vite build uses relative asset paths so it works from the repository subpath.
+
 ## Supabase setup
 
 1. Create a Supabase project and configure the two public runtime variables above in the app environment.
@@ -33,15 +44,15 @@ Vite explicitly exposes only `VITE_` and `NEXT_PUBLIC_` variables to the browser
    supabase db push
    ```
 
-4. In Supabase **Authentication → URL Configuration**, set the app's site URL and allow the app origin as a redirect URL (including the household-invitation query parameters). Configure email delivery and the invitation email template for the app's origin.
-5. Set the invitation function's server-side `APP_ORIGIN` secret and deploy the function:
+4. In Supabase **Authentication → URL Configuration**, set the site URL to `https://jangelas-wochenplan.github.io/Mampf/` and allow `https://jangelas-wochenplan.github.io/Mampf/**` as a redirect URL. Configure email delivery and the invitation email template for the app URL.
+5. Set the invitation function's server-side `APP_ORIGIN` secret to the app URL, including `/Mampf/`, and deploy the function:
 
    ```sh
-   supabase secrets set APP_ORIGIN=https://<your-app-origin>
+   supabase secrets set APP_ORIGIN=https://jangelas-wochenplan.github.io/Mampf/
    supabase functions deploy invite-household-member
    ```
 
-   For local development, `APP_ORIGIN` may use `http://localhost:<port>`. Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to Edge Functions. The invitation function validates the caller as a household owner; the service-role key is never sent to the browser.
+   For local development, `APP_ORIGIN` may use `http://localhost:<port>/`. Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to Edge Functions. The invitation function validates the caller as a household owner; the service-role key is never sent to the browser.
 6. Sign in as the initial owner, create the household, then invite other members by email. New accounts receive an email invitation; for an existing Mampf account, share the generated one-time link. Invitation tokens are random, stored only as hashes, expire after seven days, and can be accepted only by the invited email account. RLS policies restrict household data to its members.
 
-The migration creates the household, invitation, recipe, meal-plan, and shopping-list schema. Recipe and plan edits are committed through database functions so their related rows are saved atomically. No production hosting provider is assumed by this repository.
+The migration creates the household, invitation, recipe, meal-plan, and shopping-list schema. Recipe and plan edits are committed through database functions so their related rows are saved atomically. GitHub Pages hosts the static app; Supabase must be configured separately for authentication and shared data.

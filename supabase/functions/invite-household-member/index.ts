@@ -8,24 +8,24 @@ if (!supabaseUrl || !serviceRoleKey || !appOrigin) {
   throw new Error("SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and APP_ORIGIN are required.");
 }
 
-const origin = new URL(appOrigin);
+const appUrl = new URL(appOrigin);
 if (
-  !["https:", "http:"].includes(origin.protocol) ||
-  (origin.protocol === "http:" && !["localhost", "127.0.0.1"].includes(origin.hostname)) ||
-  origin.pathname !== "/" ||
-  origin.search ||
-  origin.hash ||
-  origin.username ||
-  origin.password
+  !["https:", "http:"].includes(appUrl.protocol) ||
+  (appUrl.protocol === "http:" && !["localhost", "127.0.0.1"].includes(appUrl.hostname)) ||
+  appUrl.search ||
+  appUrl.hash ||
+  appUrl.username ||
+  appUrl.password
 ) {
-  throw new Error("APP_ORIGIN must be an HTTPS origin (HTTP is allowed for localhost development).");
+  throw new Error("APP_ORIGIN must be an HTTPS app URL (HTTP is allowed for localhost development).");
 }
+if (!appUrl.pathname.endsWith("/")) appUrl.pathname = `${appUrl.pathname}/`;
 
 const adminClient = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 const corsHeaders = {
-  "Access-Control-Allow-Origin": origin.origin,
+  "Access-Control-Allow-Origin": appUrl.origin,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Cache-Control": "no-store",
@@ -38,7 +38,7 @@ function respond(body: Record<string, unknown>, status = 200) {
 }
 
 Deno.serve(async (request) => {
-  if (request.headers.get("Origin") !== origin.origin) {
+  if (request.headers.get("Origin") !== appUrl.origin) {
     return respond({ error: "Origin is not allowed." }, 403);
   }
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -112,7 +112,7 @@ Deno.serve(async (request) => {
     return respond({ error: "Could not create the household invitation." }, 500);
   }
 
-  const emailInvitationUrl = new URL("/", origin.origin);
+  const emailInvitationUrl = new URL(appUrl);
   emailInvitationUrl.searchParams.set("household_invite", token);
   emailInvitationUrl.searchParams.set("set_password", "true");
   const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
@@ -120,7 +120,7 @@ Deno.serve(async (request) => {
   });
   if (inviteError) {
     if (/already registered|already exists/i.test(inviteError.message)) {
-      const invitationUrl = new URL("/", origin.origin);
+      const invitationUrl = new URL(appUrl);
       invitationUrl.searchParams.set("household_invite", token);
       return respond({ sent: false, invite_url: invitationUrl.toString() });
     }
