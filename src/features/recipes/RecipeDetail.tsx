@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Clock3, CookingPot, Pencil, Star, X } from "lucide-react";
+import { Clock3, CookingPot, ExternalLink, Pencil, Star, X } from "lucide-react";
+import RecipeArtwork from "./RecipeArtwork";
 import { averageRating, ratingByUser } from "../../lib/ratings";
 import type { Recipe } from "../../types";
 import { formatQuantity } from "../../lib/format";
@@ -41,13 +42,18 @@ export default function RecipeDetail({
       >
         <button className="icon-button detail-close" onClick={onClose} aria-label="Schließen"><X size={20} /></button>
         <div className="detail-hero">
-          <div className="recipe-art detail-art">{recipe.emoji}</div>
+          <RecipeArtwork className="recipe-art detail-art" imageUrl={recipe.image_url} emoji={recipe.emoji} />
           <div>
             <p className="eyebrow">Aus eurem Kochbuch</p>
             <h2 id="recipe-detail-title">{recipe.title}</h2>
             <p>{recipe.description || "Ein Lieblingsessen für die ganze Runde."}</p>
             {recipe.category && <span className="category-chip">{recipe.category}</span>}
             {recipe.prep_minutes && <span className="meta-pill"><Clock3 size={15} /> {recipe.prep_minutes} Min.</span>}
+            {recipe.source_url && (
+              <a className="recipe-source-link" href={recipe.source_url} target="_blank" rel="noreferrer">
+                <ExternalLink size={14} /> Originalrezept öffnen
+              </a>
+            )}
           </div>
         </div>
         <div className="detail-rating">

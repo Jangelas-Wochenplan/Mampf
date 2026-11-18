@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, Check, X } from "lucide-react";
 import type { Recipe } from "../../types";
+import RecipeArtwork from "./RecipeArtwork";
 
 interface CookingModeProps {
   recipe: Recipe;
@@ -29,7 +30,10 @@ export default function CookingMode({ recipe, onClose }: CookingModeProps) {
     <div className="cooking-overlay" role="dialog" aria-modal="true" aria-label="Kochmodus">
       <header className="cooking-topbar">
         <div className="cooking-brand"><span className="brand-mark">m</span><span>Kochmodus</span></div>
-        <div className="cooking-recipe-name">{recipe.title}</div>
+        <div className="cooking-recipe-name">
+          <RecipeArtwork className="cooking-recipe-thumb" imageUrl={recipe.image_url} emoji={recipe.emoji} />
+          <span>{recipe.title}</span>
+        </div>
         <button className="icon-button cooking-close" onClick={onClose} aria-label="Kochmodus schließen">
           <X size={20} />
         </button>

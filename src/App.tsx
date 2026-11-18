@@ -10,7 +10,6 @@ import {
   ChevronRight,
   CircleHelp,
   Clock3,
-  Heart,
   Home,
   LogOut,
   Plus,
@@ -23,11 +22,12 @@ import {
 } from "lucide-react";
 import CookingMode from "./features/recipes/CookingMode";
 import RecipeDetail from "./features/recipes/RecipeDetail";
+import RecipeArtwork from "./features/recipes/RecipeArtwork";
 import RecipeEditor, { type RecipePayload } from "./features/recipes/RecipeEditor";
 import { addDays, formatDateKey, formatQuantity, localDateKey, mondayOf } from "./lib/format";
 import { chooseRecipesForWeek, type PlannedDay, type RecipeUsage } from "./lib/meal-planning";
+import { serializeMealPlan } from "./lib/meal-plan-payload";
 import { averageRating } from "./lib/ratings";
-import { aggregateIngredients } from "./lib/shopping-list";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type { AppView, Household, HouseholdRole, MealPlan, Recipe, ShoppingItem } from "./types";
 
@@ -619,7 +619,7 @@ export default function App() {
     async function loadRecipes() {
       const { data, error: recipesError } = await client!
         .from("recipes")
-        .select("id, household_id, title, description, category, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_steps(id, instruction, position, step_ingredients:recipe_step_ingredients(id, recipe_ingredient_id, quantity, unit, recipe_ingredient:recipe_ingredients(name))), recipe_ratings(user_id, rating)")
+        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_steps(id, instruction, position, step_ingredients:recipe_step_ingredients(id, recipe_ingredient_id, quantity, unit, recipe_ingredient:recipe_ingredients(name))), recipe_ratings(user_id, rating)")
         .eq("household_id", household!.id)
         .order("title");
       if (recipesError) throw recipesError;
@@ -629,6 +629,8 @@ export default function App() {
         title: string;
         description: string;
         category: string;
+        source_url: string;
+        image_url: string | null;
         prep_minutes: number | null;
         servings: number;
         emoji: string;
@@ -738,30 +740,10 @@ export default function App() {
 
   async function persistPlan(days: Array<PlannedDay & { recipeId: string | null }>, message: string) {
     if (!client || !household || !session) throw new Error("Haushalt nicht verfügbar.");
-    const ingredientAmounts = days.flatMap((day) => {
-      if (day.excluded || !day.recipeId) return [];
-      const recipe = recipesById.get(day.recipeId);
-      if (!recipe) return [];
-      return recipe.recipe_ingredients.map((ingredient) => ({
-        name: ingredient.name,
-        quantity: ingredient.quantity === null ? null : ingredient.quantity * (4 / recipe.servings),
-        unit: ingredient.unit,
-      }));
-    });
-    const aggregated = aggregateIngredients(ingredientAmounts);
+    const payload = serializeMealPlan(days, recipesById);
     const { error: saveError } = await client.rpc("save_meal_plan", {
       plan_start_date: weekStart,
-      days_payload: days.map((day) => ({
-        day_date: day.date,
-        excluded: day.excluded,
-        recipe_id: day.excluded ? null : day.recipeId,
-      })),
-      shopping_payload: aggregated.map((item, index) => ({
-        name: item.name,
-        quantity: item.quantity,
-        unit: item.unit,
-        sort_order: index,
-      })),
+      ...payload,
     });
     if (saveError) throw saveError;
     setNotice(message);
@@ -842,15 +824,35 @@ export default function App() {
     setError("");
     try {
       if (!client) throw new Error("Supabase ist nicht verbunden.");
-      const { error: saveError } = await client.rpc("save_recipe_with_category", {
+      const sourceUrl = payload.source_url.trim();
+      const { data: recipeId, error: saveError } = await client.rpc("save_recipe_with_category", {
         recipe_payload: payload,
         target_recipe_id: editorRecipe?.id ?? null,
       });
       if (saveError) throw saveError;
+
+      let imageUrl: string | null = null;
+      let imageWarning = "";
+      if (sourceUrl && typeof recipeId === "string") {
+        const { data, error: imageError } = await client.functions.invoke<{ image_url: string | null }>(
+          "resolve-recipe-image",
+          { body: { recipe_id: recipeId } },
+        );
+        if (imageError) imageWarning = await functionErrorText(imageError);
+        else imageUrl = data?.image_url ?? null;
+      }
+
       setEditorOpen(false);
       setEditorRecipe(null);
       setWorkspaceRevision((revision) => revision + 1);
-      setNotice(editorRecipe ? "Das Rezept wurde gemeinsam aktualisiert." : "Das Rezept ist in eurem Kochbuch.");
+      const savedNotice = editorRecipe ? "Das Rezept wurde gemeinsam aktualisiert." : "Das Rezept ist in eurem Kochbuch.";
+      setNotice(
+        imageWarning
+          ? `${savedNotice} Der Link ist gespeichert, aber das Titelbild konnte nicht ermittelt werden: ${imageWarning}`
+          : sourceUrl && !imageUrl
+            ? `${savedNotice} Zu diesem Link wurde kein Titelbild gefunden.`
+            : savedNotice,
+      );
       setSelectedRecipe(null);
     } catch (reason) {
       setError(errorText(reason));
@@ -858,6 +860,52 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function deleteRecipe(recipe: Recipe) {
+    if (!window.confirm(`"${recipe.title}" löschen? Geplante Tage werden freigegeben und die zugehörigen Einkaufslisten aktualisiert.`)) {
+      return;
+    }
+    await runAction(async () => {
+      if (!client || !household) throw new Error("Haushalt nicht verfügbar.");
+      const { data, error: plansError } = await client
+        .from("meal_plans")
+        .select("start_date, plan_days:meal_plan_days(day_date, excluded, recipe_id)")
+        .eq("household_id", household.id);
+      if (plansError) throw plansError;
+      const planRows = (data ?? []) as unknown as Array<{
+        start_date: string;
+        plan_days: Array<{ day_date: string; excluded: boolean; recipe_id: string | null }> | null;
+      }>;
+      const affectedPlans = planRows.filter((mealPlan) =>
+        mealPlan.plan_days?.some((day) => day.recipe_id === recipe.id),
+      );
+      const remainingRecipes = new Map(
+        recipes.filter((candidate) => candidate.id !== recipe.id).map((candidate) => [candidate.id, candidate]),
+      );
+      const plansPayload = affectedPlans.map((mealPlan) => {
+        const days = weekDates(mealPlan.start_date).map((day) => {
+          const existing = mealPlan.plan_days?.find((planDay) => planDay.day_date === day.date);
+          return {
+            ...day,
+            excluded: existing?.excluded ?? false,
+            recipeId: existing?.recipe_id === recipe.id ? null : existing?.recipe_id ?? null,
+          };
+        });
+        return { start_date: mealPlan.start_date, ...serializeMealPlan(days, remainingRecipes) };
+      });
+      const { error: deleteError } = await client.rpc("delete_recipe_and_update_plans", {
+        target_recipe_id: recipe.id,
+        plans_payload: plansPayload,
+      });
+      if (deleteError) throw deleteError;
+      setRecipes((current) => current.filter((candidate) => candidate.id !== recipe.id));
+      setSelectedRecipe(null);
+      setEditorOpen(false);
+      setEditorRecipe(null);
+      setWorkspaceRevision((revision) => revision + 1);
+      setNotice("Das Gericht wurde gelöscht. Betroffene Wochenpläne und Einkaufslisten wurden aktualisiert.");
+    });
   }
 
   async function rateRecipe(recipeId: string, rating: number) {
@@ -1083,7 +1131,7 @@ export default function App() {
         </button>
         <nav className="top-nav" aria-label="Hauptnavigation">
           {navItems.map(({ id, icon: Icon }) => (
-            <button key={id} className={view === id ? "nav-link active" : "nav-link"} onClick={() => setView(id)}>
+            <button key={id} className={view === id ? "nav-link active" : "nav-link"} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}>
               <Icon size={17} /> {viewLabels[id]}
             </button>
           ))}
@@ -1124,7 +1172,6 @@ export default function App() {
               <div>
                 <p className="eyebrow">{todayLabel}</p>
                 <h1>Was gibt’s heute, {localName(session.user.email, session.user.user_metadata.username)}?</h1>
-                <p>Ein guter Abend beginnt mit einem guten Plan.</p>
               </div>
               <button className="button button-quiet greeting-plan-button" onClick={() => setView("plan")}>
                 Zur Wochenübersicht <ArrowRight size={17} />
@@ -1158,8 +1205,7 @@ export default function App() {
               <div className="today-illustration">
                 <div className="illustration-sun" />
                 <div className="illustration-scribble">✳</div>
-                <div className="today-food">{todayRecipe?.emoji ?? "🍲"}</div>
-                <span className="illustration-label">mit Liebe geplant</span>
+                <RecipeArtwork className="today-food" imageUrl={todayRecipe?.image_url} emoji={todayRecipe?.emoji ?? "🍲"} />
               </div>
               <div className="today-card-decoration">M</div>
             </section>
@@ -1183,7 +1229,11 @@ export default function App() {
                         >
                           <span className="week-tile-day">{formatDateKey(day.date, { weekday: "short" }).replace(".", "")}</span>
                           <span className="week-tile-date">{formatDateKey(day.date, { day: "numeric" })}</span>
-                          <span className="week-tile-art">{day.excluded ? "☕" : recipe?.emoji ?? "＋"}</span>
+                          <RecipeArtwork
+                            className="week-tile-art"
+                            imageUrl={day.excluded ? null : recipe?.image_url}
+                            emoji={day.excluded ? "☕" : recipe?.emoji ?? "＋"}
+                          />
                           <span className="week-tile-name">{day.excluded ? "frei" : recipe?.title ?? "offen"}</span>
                           <span className="week-tile-marker">{isToday ? "heute" : `0${index + 1}`}</span>
                         </button>
@@ -1224,11 +1274,6 @@ export default function App() {
                 )}
               </section>
             </div>
-            <section className="home-footer-note">
-              <span><Heart size={16} fill="currentColor" /></span>
-              <p>Zusammen geplant, zusammen gekocht. <strong>Guten Appetit!</strong></p>
-              <span className="footer-note-spark">✳</span>
-            </section>
           </div>
         )}
 
@@ -1270,7 +1315,7 @@ export default function App() {
                             <div className="day-off-copy"><strong>Ein freier Abend</strong><span>Heute bleibt die Küche vielleicht kalt.</span></div>
                           ) : (
                             <button className="plan-meal" onClick={() => recipe && setSelectedRecipe(recipe)}>
-                              <span className="plan-meal-art">{recipe?.emoji ?? "＋"}</span>
+                              <RecipeArtwork className="plan-meal-art" imageUrl={recipe?.image_url} emoji={recipe?.emoji ?? "＋"} />
                               <span><strong>{recipe?.title ?? "Gericht wählen"}</strong><small>{recipe?.description || "Aus eurem Kochbuch"}</small></span>
                             </button>
                           )}
@@ -1340,7 +1385,10 @@ export default function App() {
                 {visibleRecipes.map((recipe, index) => (
                   <article className={`recipe-card recipe-tone-${index % 4}`} key={recipe.id}>
                     <button className="recipe-card-open" onClick={() => setSelectedRecipe(recipe)} aria-label={`${recipe.title} ansehen`}>
-                      <div className="recipe-card-art"><span>{recipe.emoji}</span><i>{["✳", "✦", "·", "✻"][index % 4]}</i><small>{recipe.prep_minutes ? `${recipe.prep_minutes} MIN` : "MIT LIEBE"}</small></div>
+                      <RecipeArtwork className="recipe-card-art" imageUrl={recipe.image_url} emoji={recipe.emoji}>
+                        <i>{["✳", "✦", "·", "✻"][index % 4]}</i>
+                        <small>{recipe.prep_minutes ? `${recipe.prep_minutes} MIN` : "MIT LIEBE"}</small>
+                      </RecipeArtwork>
                       <div className="recipe-card-copy">
                         <div>
                           <h2>{recipe.title}</h2>
@@ -1413,7 +1461,7 @@ export default function App() {
         )}
       </main>
 
-      <footer className="app-footer"><span>mampf.</span><span>Mit Liebe geplant, gemeinsam gekocht.</span><span>{memberCount} {memberCount === 1 ? "Mitglied" : "Mitglieder"} <UsersRound size={14} /></span></footer>
+      <footer className="app-footer"><span>mampf.</span><span>{memberCount} {memberCount === 1 ? "Mitglied" : "Mitglieder"} <UsersRound size={14} /></span></footer>
 
       {inviteOpen && role === "owner" && (
         <InviteDialog
@@ -1442,6 +1490,7 @@ export default function App() {
               busy={busy}
               onCancel={() => { setEditorOpen(false); setEditorRecipe(null); }}
               onSave={createRecipe}
+              onDelete={editorRecipe ? () => deleteRecipe(editorRecipe) : undefined}
             />
           </div>
         </div>

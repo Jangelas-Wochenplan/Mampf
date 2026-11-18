@@ -23,6 +23,7 @@ export interface RecipePayload {
   title: string;
   description: string;
   category: string;
+  source_url: string;
   prep_minutes: string;
   servings: number;
   emoji: string;
@@ -38,6 +39,7 @@ interface RecipeEditorProps {
   busy: boolean;
   onCancel: () => void;
   onSave: (payload: RecipePayload) => Promise<void>;
+  onDelete?: () => Promise<void>;
 }
 
 const unitGroups = [
@@ -94,13 +96,15 @@ function UnitSelect({
   label,
   value,
   onChange,
+  className,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  className?: string;
 }) {
   return (
-    <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+    <select className={className} aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">Einheit wählen</option>
       {unitGroups.map((group) => (
         <optgroup key={group.label} label={group.label}>
@@ -157,11 +161,12 @@ function initialSteps(recipe?: Recipe, ingredients = initialIngredients(recipe))
     }));
 }
 
-export default function RecipeEditor({ initial, busy, onCancel, onSave }: RecipeEditorProps) {
+export default function RecipeEditor({ initial, busy, onCancel, onSave, onDelete }: RecipeEditorProps) {
   const ingredients = initialIngredients(initial);
   const [title, setTitle] = useState(initial?.title ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [category, setCategory] = useState(initial?.category ?? "");
+  const [sourceUrl, setSourceUrl] = useState(initial?.source_url ?? "");
   const [prepMinutes, setPrepMinutes] = useState(
     initial?.prep_minutes === null || initial?.prep_minutes === undefined
       ? ""
@@ -256,11 +261,23 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
       setFormError("Bitte gib einen Titel, mindestens eine Zutat und einen Zubereitungsschritt ein.");
       return;
     }
+    if (sourceUrl.trim()) {
+      try {
+        const url = new URL(sourceUrl.trim());
+        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+          throw new Error("invalid recipe link");
+        }
+      } catch {
+        setFormError("Bitte gib einen gültigen HTTP- oder HTTPS-Link zum Rezept ein.");
+        return;
+      }
+    }
 
     await onSave({
       title: title.trim(),
       description: description.trim(),
       category: category.trim(),
+      source_url: sourceUrl.trim(),
       prep_minutes: prepMinutes.trim(),
       servings: 4,
       emoji,
@@ -334,6 +351,19 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
         </datalist>
       </label>
       <label className="field-label">
+        Link zum Rezept
+        <input
+          type="url"
+          inputMode="url"
+          autoComplete="url"
+          value={sourceUrl}
+          onChange={(event) => setSourceUrl(event.target.value)}
+          placeholder="https://beispiel.de/rezept"
+          maxLength={2048}
+        />
+        <small className="field-help">Ein öffentliches Titelbild wird beim Speichern automatisch übernommen.</small>
+      </label>
+      <label className="field-label">
         Karten-Symbol
         <select value={emoji} onChange={(event) => setEmoji(event.target.value)}>
           {["🍲", "🍝", "🥗", "🍛", "🥘", "🍜", "🌮", "🍕", "🥔"].map((item) => (
@@ -359,12 +389,14 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
         {draftIngredients.map((ingredient, index) => (
           <div className="ingredient-edit-row" key={`ingredient-${index}`}>
             <input
+              className="ingredient-name"
               aria-label={`Zutat ${index + 1}`}
               placeholder="Zutat"
               value={ingredient.name}
               onChange={(event) => updateIngredient(index, { name: event.target.value })}
             />
             <input
+              className="ingredient-quantity"
               aria-label={`Menge für Zutat ${index + 1}`}
               type="number"
               min="0"
@@ -374,13 +406,14 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
               onChange={(event) => updateIngredient(index, { quantity: event.target.value })}
             />
             <UnitSelect
+              className="ingredient-unit-select"
               label={`Einheit für Zutat ${index + 1}`}
               value={ingredient.unit}
               onChange={(unit) => updateIngredient(index, { unit })}
             />
             <button
               type="button"
-              className="icon-button subtle"
+              className="icon-button subtle ingredient-remove"
               aria-label={`Zutat ${index + 1} entfernen`}
               onClick={() => removeIngredient(index)}
               disabled={draftIngredients.length === 1}
@@ -428,6 +461,7 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
             {step.ingredients.map((stepIngredient, linkIndex) => (
               <div className="ingredient-edit-row step-ingredient-row" key={`step-${stepIndex}-ingredient-${linkIndex}`}>
                 <select
+                  className="ingredient-name"
                   aria-label={`Zutat in Schritt ${stepIndex + 1}`}
                   value={stepIngredient.ingredient_index}
                   onChange={(event) => {
@@ -447,6 +481,7 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
                   ))}
                 </select>
                 <input
+                  className="ingredient-quantity"
                   aria-label="Schrittmenge"
                   type="number"
                   min="0"
@@ -456,13 +491,14 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
                   onChange={(event) => updateStepIngredient(stepIndex, linkIndex, { quantity: event.target.value })}
                 />
                 <UnitSelect
+                  className="ingredient-unit-select"
                   label="Einheit für Schrittzutat"
                   value={stepIngredient.unit}
                   onChange={(unit) => updateStepIngredient(stepIndex, linkIndex, { unit })}
                 />
                 <button
                   type="button"
-                  className="icon-button subtle"
+                  className="icon-button subtle ingredient-remove"
                   aria-label="Schrittzutat entfernen"
                   onClick={() =>
                     updateStep(stepIndex, {
@@ -483,6 +519,11 @@ export default function RecipeEditor({ initial, busy, onCancel, onSave }: Recipe
 
       {formError && <p className="form-error" role="alert">{formError}</p>}
       <div className="form-actions">
+        {initial && onDelete && (
+          <button type="button" className="button button-quiet danger-text recipe-delete-button" onClick={() => void onDelete()} disabled={busy}>
+            <Trash2 size={16} /> Gericht löschen
+          </button>
+        )}
         <button type="button" className="button button-quiet" onClick={onCancel}>Abbrechen</button>
         <button type="submit" className="button button-primary" disabled={busy}>
           {busy ? "Wird gespeichert …" : initial ? "Änderungen speichern" : "Rezept speichern"}
