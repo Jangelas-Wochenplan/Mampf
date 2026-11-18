@@ -44,14 +44,19 @@ These are public browser configuration values, not secrets. The site is served a
    supabase db push
    ```
 
+   This is for a fresh project. If an existing database was created manually and its migration history is empty, do not run `supabase db push` until that history is reconciled; the CLI may try to recreate tables that already exist. Apply only verified, missing migration files through the SQL Editor instead.
+
+   To add the optional example recipes to a project with exactly one household, run `supabase/seed_example_recipes.sql` in the SQL Editor or with `supabase db query --remote --file supabase/seed_example_recipes.sql`. It skips recipes with matching titles.
+
 4. In Supabase **Authentication → URL Configuration**, set the site URL to `https://jangelas-wochenplan.github.io/Mampf/` and allow `https://jangelas-wochenplan.github.io/Mampf/**` as a redirect URL. Configure email delivery if you want to use password-reset emails; household invitations are shared manually and do not send email.
-5. Set the Edge Functions' server-side `APP_ORIGIN` secret to the app URL, including `/Mampf/`, and deploy the account and invitation functions:
+5. Set the Edge Functions' server-side `APP_ORIGIN` secret to the app URL, including `/Mampf/`, and deploy the account, invitation, and recipe-image functions:
 
    ```sh
    supabase secrets set APP_ORIGIN=https://jangelas-wochenplan.github.io/Mampf/
    supabase functions deploy invite-household-member
    supabase functions deploy login-with-username
    supabase functions deploy complete-household-registration
+   supabase functions deploy resolve-recipe-image
    ```
 
    For local development, `APP_ORIGIN` may use `http://localhost:<port>/`. Supabase supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to Edge Functions. The service-role key is never sent to the browser.
@@ -65,4 +70,4 @@ These are public browser configuration values, not secrets. The site is served a
    Open the returned link privately. The registration form fixes the username to `Jan` and lets Jan enter an email address and choose a password. The link can be used once, expires after seven days, and can only be generated before a household has been created. After registration, create the household in the app; Jan becomes its owner.
 7. As Jan, use **Mitglied einladen** to generate a one-time link and share it manually. The invited person chooses their email, username, and password while registering. These links are stored as hashes, expire after seven days, and can be used once. RLS policies restrict household data to its members.
 
-The migrations create the household, profile, invitation, recipe, meal-plan, and shopping-list schema. Recipes support optional categories and one editable star rating per household member; the app displays the average of submitted ratings. Recipe and plan edits are committed through database functions so their related rows are saved atomically. GitHub Pages hosts the static app; Supabase must be configured separately for authentication and shared data.
+The migrations create the household, profile, invitation, recipe, meal-plan, and shopping-list schema. Recipes support optional categories, one editable star rating per household member, and an external recipe link. When saving a recipe, the `resolve-recipe-image` Edge Function checks a public recipe page for an Open Graph, Twitter, or direct image to use as its cover. Deploy it with the other functions above. Recipe and plan edits are committed through database functions so their related rows are saved atomically. GitHub Pages hosts the static app; Supabase must be configured separately for authentication and shared data.
