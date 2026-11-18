@@ -254,11 +254,8 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
       <div className="editor-heading">
         <div>
           <p className="eyebrow">Euer Kochbuch</p>
-          <h2>{initial ? "Rezept bearbeiten" : "Neues Rezept"}</h2>
+          <h2 id="recipe-editor-title">{initial ? "Rezept bearbeiten" : "Neues Rezept"}</h2>
         </div>
-        <button type="button" className="icon-button" onClick={onCancel} aria-label="Schließen">
-          ×
-        </button>
       </div>
       <label className="field-label">
         Rezeptname
@@ -306,7 +303,7 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
           placeholder="https://beispiel.de/rezept"
           maxLength={2048}
         />
-        <small className="field-help">Wenn kein Bild hochgeladen wird, wird ein öffentliches Titelbild automatisch übernommen.</small>
+        <small className="field-help">Ohne Upload wird ein öffentliches Titelbild aus dem Link übernommen. Instagram und private Beiträge blockieren das teils; dann bitte das Bild hochladen.</small>
       </label>
       <label className="field-label">
         Rezeptbild hochladen

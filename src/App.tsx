@@ -2017,8 +2017,14 @@ export default function App() {
         />
       )}
       {editorOpen && (
-        <div className="modal-backdrop editor-backdrop" role="presentation" onClick={() => setEditorOpen(false)}>
-          <div className="editor-modal modal-card" role="presentation" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop editor-backdrop" role="presentation">
+          <div
+            className="editor-modal modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recipe-editor-title"
+            onClick={(event) => event.stopPropagation()}
+          >
             <RecipeEditor
               key={editorRecipe?.id ?? "new"}
               initial={editorRecipe ?? undefined}
