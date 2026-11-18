@@ -12,6 +12,7 @@ import {
   Clock3,
   Home,
   LogOut,
+  Moon,
   Package,
   Palette,
   Plus,
@@ -19,6 +20,7 @@ import {
   Settings2,
   ShoppingBasket,
   Sparkles,
+  Sun,
   UsersRound,
   Utensils,
 } from "lucide-react";
@@ -33,7 +35,7 @@ import { serializeMealPlan } from "./lib/meal-plan-payload";
 import { averageRating } from "./lib/ratings";
 import { comparePantryAvailability } from "./lib/pantry-matching";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import { readSavedUITheme, saveUITheme, UI_THEMES, type UIThemeId } from "./lib/ui-themes";
+import { readSavedDarkMode, saveDarkMode, UI_THEME } from "./lib/ui-themes";
 import type { AppView, Household, HouseholdRole, MealPlan, PantryItem, Recipe, ShoppingItem } from "./types";
 
 const PANTRY_IMAGE_BUCKET = "pantry-images";
@@ -551,7 +553,7 @@ export default function App() {
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [uiTheme, setUITheme] = useState<UIThemeId>(readSavedUITheme);
+  const [darkMode, setDarkMode] = useState(readSavedDarkMode);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
@@ -564,12 +566,12 @@ export default function App() {
   const [recipeSearch, setRecipeSearch] = useState("");
 
   useEffect(() => {
-    document.documentElement.dataset.theme = uiTheme;
-    document.documentElement.dataset.colorMode = UI_THEMES.find((theme) => theme.id === uiTheme)?.mode ?? "light";
-    if (!saveUITheme(uiTheme)) {
-      setNotice("Die Designauswahl gilt nur für diese Sitzung und konnte nicht gespeichert werden.");
+    document.documentElement.dataset.theme = UI_THEME.id;
+    document.documentElement.dataset.colorMode = darkMode ? "dark" : "light";
+    if (!saveDarkMode(darkMode)) {
+      setNotice("Der Darkmode gilt nur für diese Sitzung und konnte nicht gespeichert werden.");
     }
-  }, [uiTheme]);
+  }, [darkMode]);
 
   useEffect(() => {
     if (!profileMenuOpen) return;
@@ -1369,27 +1371,28 @@ export default function App() {
               </div>
               <div className="theme-picker-heading">
                 <span><Palette size={16} /> Oberfläche</span>
-                <small>10 Vorlagen</small>
+                <small>Design</small>
               </div>
-              <div className="theme-picker" role="group" aria-label="Designvorlage auswählen">
-                {UI_THEMES.map((theme) => (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    className={`theme-option${uiTheme === theme.id ? " selected" : ""}`}
-                    aria-pressed={uiTheme === theme.id}
-                    onClick={() => setUITheme(theme.id)}
-                  >
-                    <span className={`theme-swatch theme-swatch--${theme.id}`} aria-hidden="true" />
-                    <span className="theme-option-copy">
-                      <strong>{theme.name}</strong>
-                      <small>{theme.style}</small>
-                    </span>
-                    <span className={`theme-mode-badge ${theme.mode}`}>{theme.mode === "dark" ? "Dunkel" : "Hell"}</span>
-                    {uiTheme === theme.id && <Check className="theme-selected-check" size={16} aria-hidden="true" />}
-                  </button>
-                ))}
+              <div className="theme-picker" aria-label="Aktives Design">
+                <div className="theme-option selected">
+                  <span className="theme-swatch theme-swatch--ocean" aria-hidden="true" />
+                  <span className="theme-option-copy">
+                    <strong>{UI_THEME.name}</strong>
+                    <small>{UI_THEME.style}</small>
+                  </span>
+                  <Check className="theme-selected-check" size={16} aria-hidden="true" />
+                </div>
               </div>
+              <button
+                type="button"
+                className="dark-mode-toggle"
+                aria-pressed={darkMode}
+                onClick={() => setDarkMode((enabled) => !enabled)}
+              >
+                {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+                <span>{darkMode ? "Helles Design" : "Darkmode"}</span>
+                <span className={`dark-mode-switch${darkMode ? " is-on" : ""}`} aria-hidden="true"><i /></span>
+              </button>
               <button
                 type="button"
                 className="profile-logout"
