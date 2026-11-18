@@ -5,31 +5,13 @@ const PRODUCT_BARCODE_FORMATS = new Set([
   "upc_e",
   "itf",
   "code_128",
+  "code_39",
+  "code_93",
+  "codabar",
 ]);
 
 export function isProductBarcodeFormat(format: string): boolean {
   return PRODUCT_BARCODE_FORMATS.has(format);
-}
-
-export function hasValidGtinCheckDigit(value: string): boolean {
-  if (!/^\d+$/.test(value) || ![8, 12, 13, 14].includes(value.length)) return false;
-  const digits = value.split("").map(Number);
-  const checkDigit = digits.pop();
-  const weightedSum = digits.reduce((sum, digit, index) => {
-    const distanceFromRight = digits.length - 1 - index;
-    return sum + digit * (distanceFromRight % 2 === 0 ? 3 : 1);
-  }, 0);
-  return checkDigit === (10 - weightedSum % 10) % 10;
-}
-
-export function isValidProductBarcode(value: string, format: string): boolean {
-  if (!isProductBarcodeFormat(format)) return false;
-  if (format === "ean_13") return value.length === 13 && hasValidGtinCheckDigit(value);
-  if (format === "ean_8") return value.length === 8 && hasValidGtinCheckDigit(value);
-  if (format === "upc_a") return value.length === 12 && hasValidGtinCheckDigit(value);
-  if (format === "upc_e") return /^\d{8}$/.test(value);
-  if (format === "itf") return value.length === 14 && hasValidGtinCheckDigit(value);
-  return value.trim().length >= 4 && value.trim().length <= 64;
 }
 
 export class StableBarcodeReader {
