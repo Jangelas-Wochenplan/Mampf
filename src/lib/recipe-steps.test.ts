@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RecipeIngredient, RecipeStep } from "../types";
-import { recipeStepsForSave, recipeStepsToDraft } from "./recipe-steps";
+import { normalizeRecipeStepDrafts, recipeStepsForSave, recipeStepsToDraft } from "./recipe-steps";
 
 const ingredients: RecipeIngredient[] = [
   { id: "flour", name: "Mehl", quantity: 200, unit: "g", sort_order: 0 },
@@ -50,7 +50,22 @@ describe("recipe step drafts", () => {
         instruction: "Milch hinzufügen",
         ingredients: [{ ingredient_index: 1, quantity: "100", unit: "ml" }],
       },
+      { instruction: "", ingredients: [] },
     ]);
+  });
+
+  it("keeps one empty step after populated steps and removes blank gaps", () => {
+    expect(normalizeRecipeStepDrafts([
+      { instruction: "Erster Schritt", ingredients: [] },
+      { instruction: "  ", ingredients: [] },
+      { instruction: "Letzter Schritt", ingredients: [] },
+    ])).toEqual([
+      { instruction: "Erster Schritt", ingredients: [] },
+      { instruction: "Letzter Schritt", ingredients: [] },
+      { instruction: "", ingredients: [] },
+    ]);
+
+    expect(normalizeRecipeStepDrafts([])).toEqual([{ instruction: "", ingredients: [] }]);
   });
 
   it("remaps ingredient indexes and ignores blank steps when saving", () => {
