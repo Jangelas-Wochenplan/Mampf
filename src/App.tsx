@@ -34,6 +34,7 @@ import { chooseRecipesForWeek, type PlannedDay, type RecipeUsage } from "./lib/m
 import { serializeMealPlan } from "./lib/meal-plan-payload";
 import { averageRating } from "./lib/ratings";
 import { comparePantryAvailability } from "./lib/pantry-matching";
+import { pantryErrorMessage } from "./lib/pantry-errors";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { readSavedDarkMode, saveDarkMode, UI_THEME } from "./lib/ui-themes";
 import type { AppView, Household, HouseholdRole, MealPlan, PantryItem, Recipe, ShoppingItem } from "./types";
@@ -706,21 +707,25 @@ export default function App() {
       if (active) setMemberCount(data?.length ?? 0);
     }
     async function loadPantry() {
-      const { data, error: pantryError } = await client!
-        .from("pantry_items")
-        .select("id, household_id, name, barcode, quantity, unit, image_path, created_at, updated_at")
-        .eq("household_id", household!.id)
-        .order("name");
-      if (pantryError) throw pantryError;
-      const rows = (data ?? []) as unknown as Array<Omit<PantryItem, "image_url">>;
-      const items = await Promise.all(rows.map(async (item): Promise<PantryItem> => {
-        if (!item.image_path) return { ...item, image_url: null };
-        const { data: signedImage, error: imageError } = await client!
-          .storage.from(PANTRY_IMAGE_BUCKET).createSignedUrl(item.image_path, 60 * 60);
-        if (imageError) throw imageError;
-        return { ...item, image_url: signedImage.signedUrl };
-      }));
-      if (active) setPantryItems(items);
+      try {
+        const { data, error: pantryError } = await client!
+          .from("pantry_items")
+          .select("id, household_id, name, category, barcode, quantity, unit, image_path, created_at, updated_at")
+          .eq("household_id", household!.id)
+          .order("name");
+        if (pantryError) throw pantryError;
+        const rows = (data ?? []) as unknown as Array<Omit<PantryItem, "image_url">>;
+        const items = await Promise.all(rows.map(async (item): Promise<PantryItem> => {
+          if (!item.image_path) return { ...item, image_url: null };
+          const { data: signedImage, error: imageError } = await client!
+            .storage.from(PANTRY_IMAGE_BUCKET).createSignedUrl(item.image_path, 60 * 60);
+          if (imageError) throw imageError;
+          return { ...item, image_url: signedImage.signedUrl };
+        }));
+        if (active) setPantryItems(items);
+      } catch (reason) {
+        if (active) setError(pantryErrorMessage(reason));
+      }
     }
     Promise.all([loadRecipes(), loadMembers(), loadPantry()])
       .catch((reason: unknown) => { if (active) setError(errorText(reason)); })
@@ -1005,12 +1010,25 @@ export default function App() {
       const record = {
         household_id: household.id,
         name: input.name,
+        category: input.category,
         barcode: input.barcode,
         quantity: input.quantity,
         unit: input.unit,
         image_path: imagePath,
       };
-      if (input.id) {
+      if (input.addToExisting) {
+        if (!input.id) throw new Error("Der vorhandene Vorratseintrag für den Barcode wurde nicht gefunden.");
+        const { error: mergeError } = await client.rpc("add_pantry_stock", {
+          p_item_id: input.id,
+          p_quantity: input.quantity,
+          p_name: input.name,
+          p_category: input.category,
+          p_barcode: input.barcode,
+          p_unit: input.unit,
+          p_image_path: imagePath,
+        });
+        if (mergeError) throw mergeError;
+      } else if (input.id) {
         const { error: updateError } = await client
           .from("pantry_items")
           .update({ ...record, updated_at: new Date().toISOString() })
@@ -1037,19 +1055,21 @@ export default function App() {
           cleanupError = error;
         }
         if (cleanupError) {
-          const combinedError = new Error(`${errorText(reason)} Das nicht gespeicherte Bild konnte zudem nicht entfernt werden: ${errorText(cleanupError)}`);
+          const combinedError = new Error(`${pantryErrorMessage(reason)} Das nicht gespeicherte Bild konnte zudem nicht entfernt werden: ${errorText(cleanupError)}`);
           setError(errorText(combinedError));
           throw combinedError;
         }
       }
-      setError(errorText(reason));
+      setError(pantryErrorMessage(reason));
       throw reason;
     } finally {
       setBusy(false);
     }
 
     setWorkspaceRevision((revision) => revision + 1);
-    setNotice(input.id ? "Der Vorrat wurde aktualisiert." : "Der Vorrat wurde hinzugefügt.");
+    setNotice(input.addToExisting
+      ? "Die Menge wurde zum vorhandenen Vorrat addiert."
+      : input.id ? "Der Vorrat wurde aktualisiert." : "Der Vorrat wurde hinzugefügt.");
     if (existing?.image_path && existing.image_path !== imagePath) {
       try {
         const { error: cleanupError } = await client.storage.from(PANTRY_IMAGE_BUCKET).remove([existing.image_path]);
@@ -1058,6 +1078,34 @@ export default function App() {
         setError(`Der Vorrat wurde gespeichert, aber das alte Produktbild konnte nicht entfernt werden: ${errorText(reason)}`);
       }
     }
+  }
+
+  async function findPantryItemByBarcode(barcode: string): Promise<PantryItem | null> {
+    if (!client || !household) throw new Error("Haushalt nicht verfügbar.");
+    const { data, error: lookupError } = await client
+      .from("pantry_items")
+      .select("id, household_id, name, category, barcode, quantity, unit, image_path, created_at, updated_at")
+      .eq("household_id", household.id)
+      .eq("barcode", barcode)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!data) return null;
+
+    const item = data as unknown as Omit<PantryItem, "image_url">;
+    let imageUrl: string | null = null;
+    if (item.image_path) {
+      const { data: signedImage, error: imageError } = await client.storage
+        .from(PANTRY_IMAGE_BUCKET)
+        .createSignedUrl(item.image_path, 60 * 60);
+      if (imageError) throw imageError;
+      imageUrl = signedImage.signedUrl;
+    }
+    const result: PantryItem = { ...item, image_url: imageUrl };
+    setPantryItems((current) => [
+      ...current.filter((currentItem) => currentItem.id !== result.id),
+      result,
+    ]);
+    return result;
   }
 
   async function deletePantryItem(item: PantryItem) {
@@ -1075,7 +1123,7 @@ export default function App() {
         .single();
       if (deleteError) throw deleteError;
     } catch (reason) {
-      setError(errorText(reason));
+      setError(pantryErrorMessage(reason));
       throw reason;
     } finally {
       setBusy(false);
@@ -1724,6 +1772,7 @@ export default function App() {
           <PantryPage
             items={pantryItems}
             busy={busy}
+            onFindByBarcode={findPantryItemByBarcode}
             onSave={savePantryItem}
             onDelete={deletePantryItem}
           />

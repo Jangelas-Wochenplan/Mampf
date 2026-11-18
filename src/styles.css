@@ -29,10 +29,13 @@
 
 * { box-sizing: border-box; }
 
+html { overflow-x: hidden; }
+
 body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  overflow-x: hidden;
   background: var(--canvas);
 }
 
@@ -129,7 +132,7 @@ p { color: var(--muted); line-height: 1.6; }
 .muted-copy { color: var(--muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 
-.app-shell { display: flex; min-height: 100vh; min-height: 100dvh; flex-direction: column; }
+.app-shell { display: flex; min-width: 0; min-height: 100vh; min-height: 100dvh; flex-direction: column; }
 .topbar {
   position: sticky;
   z-index: 20;
@@ -366,6 +369,7 @@ p { color: var(--muted); line-height: 1.6; }
 .pantry-quantity { position: absolute; right: 11px; bottom: 11px; border: 1px solid rgba(255,255,255,.7); border-radius: 99px; padding: 6px 10px; background: rgba(255,254,250,.94); color: #4e6148; font-size: 0.76rem; font-weight: 700; box-shadow: 0 2px 8px rgba(20,30,20,.08); }
 .pantry-card-content { display: flex; min-height: 78px; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 13px; }
 .pantry-card-content h2 { overflow: hidden; margin: 0; color: #43503f; font-size: 1rem; text-overflow: ellipsis; white-space: nowrap; }
+.pantry-category-tag { display: inline-block; max-width: 100%; overflow: hidden; margin-top: 5px; border-radius: 99px; padding: 3px 8px; background: var(--green-soft); color: var(--green); font-size: 0.63rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .pantry-barcode { display: flex; align-items: center; gap: 5px; margin: 6px 0 0; color: #92988c; font-size: 0.68rem; }
 .pantry-card-actions { display: flex; flex: 0 0 auto; gap: 3px; }
 .pantry-card-actions .icon-button { width: 36px; height: 36px; }
@@ -613,8 +617,9 @@ p { color: var(--muted); line-height: 1.6; }
   .household-chip span { max-width: 66px; font-size: 0.69rem; }
   .invite-button { width: 40px; min-height: 40px; justify-content: center; padding: 0; }
   .invite-button span { display: none; }
-  .top-nav { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; order: 2; width: 100%; height: calc(64px + env(safe-area-inset-bottom)); justify-content: space-around; margin: 0; border-top: 1px solid #e8e5dc; padding: 4px 4px env(safe-area-inset-bottom); background: rgba(255, 254, 250, 0.97); box-shadow: 0 -5px 20px rgba(52, 60, 44, 0.07); backdrop-filter: blur(14px); }
-  .nav-link { min-width: 0; min-height: 54px; flex: 1; flex-direction: column; justify-content: center; gap: 3px; padding: 5px 2px; font-size: 0.66rem; }
+  .top-nav { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; order: 2; display: flex; width: 100%; height: calc(64px + env(safe-area-inset-bottom)); flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; margin: 0; border-top: 1px solid #e8e5dc; padding: 4px 8px env(safe-area-inset-bottom); background: rgba(255, 254, 250, 0.97); box-shadow: 0 -5px 20px rgba(52, 60, 44, 0.07); backdrop-filter: blur(14px); overscroll-behavior-x: contain; scroll-padding-inline: 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .top-nav::-webkit-scrollbar { display: none; }
+  .nav-link { min-width: 76px; min-height: 54px; flex: 0 0 auto; flex-direction: column; justify-content: center; gap: 3px; padding: 5px 6px; font-size: 0.66rem; }
   .nav-link svg { width: 19px; height: 19px; }
   .nav-link.active::after { top: -1px; right: 21%; bottom: auto; left: 21%; height: 3px; }
   .page-content { width: calc(100% - 28px); padding: 26px 0 calc(84px + env(safe-area-inset-bottom)); }
@@ -641,8 +646,8 @@ p { color: var(--muted); line-height: 1.6; }
   .panel { border-radius: 17px; padding: 19px 15px; }
   .panel-heading { align-items: flex-start; }
   .panel-heading h2 { font-size: 1.3rem; }
-  .week-tiles { display: flex; overflow-x: auto; gap: 7px; margin: 0 -4px; padding: 1px 4px 9px; scroll-snap-type: x mandatory; scrollbar-width: thin; }
-  .week-tile { min-width: 78px; min-height: 136px; flex: 0 0 78px; scroll-snap-align: start; }
+  .week-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .week-tile { min-width: 0; min-height: 136px; }
   .week-tile-art { width: 44px; height: 44px; flex: 0 0 auto; font-size: 1.52rem; }
   .week-tile-name { font-size: 0.64rem; }
   .shopping-preview { padding: 19px; }
@@ -650,13 +655,14 @@ p { color: var(--muted); line-height: 1.6; }
   .home-footer-note p { font-size: 0.85rem; }
   .plan-day-card { grid-template-columns: 42px minmax(0, 1fr); gap: 9px; padding: 10px 9px; }
   .plan-day-date strong { font-size: 1.45rem; }
-  .plan-day-controls { grid-column: 2; flex-wrap: wrap; justify-content: flex-start; gap: 7px; margin: 0 0 2px; }
+  .plan-day-controls { min-width: 0; grid-column: 2; flex-wrap: wrap; justify-content: flex-start; gap: 7px; margin: 0 0 2px; }
   .plan-day-main { grid-column: 2; grid-row: 1; }
   .plan-meal { gap: 9px; }
   .plan-meal-art { width: 44px; height: 44px; border-radius: 13px; font-size: 1.55rem; }
   .plan-meal strong, .day-off-copy strong { font-size: 0.94rem; }
   .plan-meal small, .day-off-copy span { max-width: 230px; font-size: 0.68rem; }
-  .recipe-select-wrap select { max-width: 180px; font-size: 0.7rem; }
+  .recipe-select-wrap { min-width: 0; flex: 1 1 125px; }
+  .recipe-select-wrap select { width: 100%; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 0.7rem; white-space: nowrap; }
   .exclude-toggle { margin-left: auto; }
   .plan-sidebar { grid-template-columns: 1fr; }
   .plan-note-card { min-height: 0; }
@@ -801,6 +807,18 @@ p { color: var(--muted); line-height: 1.6; }
   .page-content { width: calc(100% - 20px); }
   .pantry-grid { grid-template-columns: 1fr 1fr; }
   .pantry-page-actions .button { font-size: 0.69rem; }
+}
+
+@media (max-width: 640px) {
+  #root, .app-shell { width: 100%; min-width: 0; max-width: 100%; overflow-x: hidden; }
+  .page-content, .home-page, .section-page, .home-grid, .panel { min-width: 0; max-width: 100%; }
+  .home-page { overflow-x: hidden; }
+  .week-tile { width: 100%; }
+  .week-tile-name, .greeting-row h1 { overflow-wrap: anywhere; }
+  .plan-day-card { min-width: 0; }
+  .plan-day-controls { grid-column: 1 / -1; }
+  .recipe-select-wrap { flex-basis: 110px; }
+  .exclude-toggle { white-space: normal; }
 }
 
 @media (hover: none) {
