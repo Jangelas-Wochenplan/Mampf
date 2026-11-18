@@ -1771,8 +1771,7 @@ export default function App() {
                 {visibleRecipes.map((recipe, index) => (
                   <article className={`recipe-card recipe-tone-${index % 4}`} key={recipe.id}>
                     <button className="recipe-card-open" onClick={() => setSelectedRecipe(recipe)} aria-label={`${recipe.title} ansehen`}>
-                      <RecipeArtwork className="recipe-card-art" imageUrl={recipe.image_url} emoji={recipe.emoji}>
-                        <i>{["✳", "✦", "·", "✻"][index % 4]}</i>
+                      <RecipeArtwork className="recipe-card-art" imageUrl={recipe.image_url} showEmoji={false}>
                         <small>{recipe.prep_minutes ? `${recipe.prep_minutes} MIN` : "MIT LIEBE"}</small>
                       </RecipeArtwork>
                       <div className="recipe-card-copy">
