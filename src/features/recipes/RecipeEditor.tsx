@@ -3,6 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { commonIngredientUnits, ingredientUnitGroups } from "../../lib/ingredient-units";
 import { isPantryImageCandidate } from "../../lib/pantry-images";
 import {
+  normalizeRecipeStepDrafts,
   recipeStepsForSave,
   recipeStepsToDraft,
   type RecipeStepDraft,
@@ -155,11 +156,14 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
 
   function updateStep(index: number, patch: Partial<RecipeStepDraft>) {
     setSteps((current) =>
-      current.map((step, stepIndex) => (stepIndex === index ? { ...step, ...patch } : step)),
+      normalizeRecipeStepDrafts(
+        current.map((step, stepIndex) => (stepIndex === index ? { ...step, ...patch } : step)),
+      ),
     );
   }
 
   function addStepIngredient(stepIndex: number) {
+    if (!steps[stepIndex]?.instruction.trim()) return;
     const ingredientIndex = draftIngredients.findIndex((ingredient) => ingredient.name.trim());
     if (ingredientIndex < 0) return;
     const ingredient = draftIngredients[ingredientIndex];
@@ -377,15 +381,8 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
         <div className="section-title-row">
           <div>
             <h3>Zubereitung</h3>
-            <p>Ordne jedem Schritt die verwendeten Zutaten und Mengen zu.</p>
+            <p>Nach dem Ausfüllen eines Schritts erscheint automatisch der nächste. Ordne jedem Schritt die verwendeten Zutaten und Mengen zu.</p>
           </div>
-          <button
-            type="button"
-            className="text-button"
-            onClick={() => setSteps((current) => [...current, { instruction: "", ingredients: [] }])}
-          >
-            <Plus size={16} /> Schritt
-          </button>
         </div>
         {steps.map((step, stepIndex) => (
           <div className="step-edit-card" key={`step-${stepIndex}`}>
@@ -394,8 +391,10 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
               <button
                 type="button"
                 className="text-button danger-text"
-                onClick={() => setSteps((current) => current.filter((_, index) => index !== stepIndex))}
-                disabled={steps.length === 1}
+                onClick={() => setSteps((current) =>
+                  normalizeRecipeStepDrafts(current.filter((_, index) => index !== stepIndex)),
+                )}
+                disabled={stepIndex === steps.length - 1}
               >
                 <Trash2 size={15} /> Entfernen
               </button>
@@ -403,7 +402,7 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
             <textarea
               aria-label={`Anleitung Schritt ${stepIndex + 1}`}
               rows={3}
-              placeholder="Was passiert in diesem Schritt?"
+              placeholder={stepIndex === steps.length - 1 ? "Nächster Schritt" : "Was passiert in diesem Schritt?"}
               value={step.instruction}
               onChange={(event) => updateStep(stepIndex, { instruction: event.target.value })}
               maxLength={3000}
@@ -462,7 +461,7 @@ export default function RecipeEditor({ initial, busy, error, onCancel, onSave, o
               type="button"
               className="text-button"
               onClick={() => addStepIngredient(stepIndex)}
-              disabled={!draftIngredients.some((ingredient) => ingredient.name.trim())}
+              disabled={!step.instruction.trim() || !draftIngredients.some((ingredient) => ingredient.name.trim())}
             >
               <Plus size={15} /> Zutat für diesen Schritt
             </button>

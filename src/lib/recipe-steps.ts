@@ -25,15 +25,20 @@ interface RecipeIngredientDraftValue {
   unit: string;
 }
 
+export function normalizeRecipeStepDrafts(steps: RecipeStepDraft[]): RecipeStepDraft[] {
+  const populated = steps.filter((step) => step.instruction.trim());
+  return [...populated, { instruction: "", ingredients: [] }];
+}
+
 export function recipeStepsToDraft(
   steps: RecipeStep[],
   ingredients: RecipeIngredient[],
   ingredientDrafts: RecipeIngredientDraftValue[],
 ): RecipeStepDraft[] {
-  if (steps.length === 0) return [{ instruction: "", ingredients: [] }];
+  if (steps.length === 0) return normalizeRecipeStepDrafts([]);
   const ingredientIndexes = new Map(ingredients.map((ingredient, index) => [ingredient.id, index]));
 
-  return steps
+  const drafts = steps
     .slice()
     .sort((a, b) => a.position - b.position)
     .map((step) => ({
@@ -52,6 +57,7 @@ export function recipeStepsToDraft(
         }];
       }),
     }));
+  return normalizeRecipeStepDrafts(drafts);
 }
 
 export function recipeStepsForSave(
