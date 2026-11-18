@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Clock3, CookingPot, ExternalLink, Pencil, Star, Trash2, X } from "lucide-react";
 import RecipeArtwork from "./RecipeArtwork";
 import { averageRating, ratingByUser } from "../../lib/ratings";
+import { recipePreparationText } from "../../lib/recipe-preparation";
 import type { Recipe } from "../../types";
 import { formatQuantity } from "../../lib/format";
 
@@ -33,6 +34,7 @@ export default function RecipeDetail({
   const ratings = recipe.recipe_ratings ?? [];
   const average = averageRating(ratings);
   const ownRating = ratingByUser(ratings, currentUserId);
+  const preparation = recipePreparationText(recipe.recipe_steps);
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
@@ -105,6 +107,12 @@ export default function RecipeDetail({
             </ul>
           </section>
         </div>
+        {preparation && (
+          <section className="recipe-preparation">
+            <h3>Zubereitung</h3>
+            <p>{preparation}</p>
+          </section>
+        )}
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="detail-actions">
           <button className="button button-quiet danger-text recipe-delete-button" onClick={onDelete} disabled={busy}>

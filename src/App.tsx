@@ -38,6 +38,7 @@ import { averageRating } from "./lib/ratings";
 import { comparePantryAvailability } from "./lib/pantry-matching";
 import { pantryErrorMessage } from "./lib/pantry-errors";
 import { preparePantryImage } from "./lib/pantry-images";
+import { recipeStepsFromPreparation } from "./lib/recipe-preparation";
 import { isShoppingListComplete } from "./lib/shopping-archive";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { readSavedDarkMode, saveDarkMode, UI_THEME } from "./lib/ui-themes";
@@ -676,7 +677,7 @@ export default function App() {
     async function loadRecipes() {
       const { data, error: recipesError } = await client!
         .from("recipes")
-        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_ingredients(id, name, quantity, unit, sort_order), recipe_ratings(user_id, rating)")
+        .select("id, household_id, title, description, category, source_url, image_url, prep_minutes, servings, emoji, created_at, recipe_steps(id, instruction, position), recipe_ingredients(id, name, quantity, unit, sort_order), recipe_ratings(user_id, rating)")
         .eq("household_id", household!.id)
         .order("title");
       if (recipesError) throw recipesError;
@@ -692,6 +693,7 @@ export default function App() {
         servings: number;
         emoji: string;
         created_at: string;
+        recipe_steps: Recipe["recipe_steps"];
         recipe_ingredients: Recipe["recipe_ingredients"];
         recipe_ratings: Recipe["recipe_ratings"];
       }>;
@@ -913,7 +915,7 @@ export default function App() {
       if (!client) throw new Error("Supabase ist nicht verbunden.");
       const sourceUrl = payload.source_url.trim();
       const { data: recipeId, error: saveError } = await client.rpc("save_recipe_with_category", {
-        recipe_payload: { ...payload, steps: [] },
+        recipe_payload: { ...payload, steps: recipeStepsFromPreparation(payload.preparation) },
         target_recipe_id: editorRecipe?.id ?? null,
       });
       if (saveError) throw saveError;

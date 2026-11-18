@@ -14,6 +14,12 @@ export interface RecipeIngredient {
   sort_order: number;
 }
 
+export interface RecipeStep {
+  id: string;
+  instruction: string;
+  position: number;
+}
+
 export interface RecipeRating {
   user_id: string;
   rating: number;
@@ -31,6 +37,7 @@ export interface Recipe {
   servings: number;
   emoji: string;
   created_at: string;
+  recipe_steps: RecipeStep[];
   recipe_ingredients: RecipeIngredient[];
   recipe_ratings: RecipeRating[];
 }
